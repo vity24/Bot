@@ -178,6 +178,8 @@ ISO3_TO_FLAG = {
 
 admin_no_cooldown = set()
 user_carousel = {}
+# --- Для листалок по клубам ---
+user_club_carousel = {}
 
 # --- Новое для листалки mycards
 user_cards_pagination = {}
@@ -243,6 +245,7 @@ def main():
         BotCommand("card", "Получить новую карточку"),
         BotCommand("mycards", "Коллекция (листай кнопками)"),
         BotCommand("mycards2", "Коллекция по одной карточке"),
+        BotCommand("club", "Карточки по клубам"),
         BotCommand("myid", "Узнать свой user_id"),
         BotCommand("me", "Твой рейтинг и прогресс"),
         BotCommand("trade", "Обмен картами по ID"),
@@ -252,7 +255,7 @@ def main():
         BotCommand("topref", "ТОП по приглашениям"),
     ]
     # 👇 Устанавливаем команды в меню Telegram
-    updater.bot.set_my_commands(bot_commands)
+    application.bot.set_my_commands(bot_commands)
     conn = get_db()
     c = conn.cursor()
     c.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT, last_card_time INTEGER)')
@@ -586,6 +589,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/card — получить карточку\n"
         "/mycards — твоя коллекция (листай кнопками)\n"
         "/mycards2 — коллекция с листанием по одной\n"
+        "/club — просмотр карт по клубам\n"
         "/me — твой рейтинг и прогресс\n"
         "/top — топ-10 игроков\n"
         "/top50 — топ-50 игроков\n"
@@ -1120,19 +1124,81 @@ def get_full_cards_for_user(user_id):
 
     return cards, sum(count_dict.values())
 
-async def send_cards_page(chat_id, user_id, context, page=0, edit_message=False, message_id=None):
-    # Получаем все карточки пользователя
+# --- Работа с клубами ---
+def get_all_club_abbrs():
+    """Список всех клубов, даже если заполнено только team_ru."""
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT card_id FROM inventory WHERE user_id=?", (user_id,))
-    card_ids = [r[0] for r in c.fetchall()]
+    c.execute("""
+        SELECT DISTINCT COALESCE(team_en, team_ru) AS club
+          FROM cards
+         WHERE club IS NOT NULL AND club != ''
+    """)
+    clubs = sorted(row[0] for row in c.fetchall())
+    conn.close()
+    return clubs
+
+def get_club_total_counts():
+    """{club_key: уникальных карт в базе} по обеим колонкам."""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""
+        SELECT COALESCE(team_en, team_ru) AS club,
+               COUNT(DISTINCT id)
+          FROM cards
+         WHERE club IS NOT NULL AND club != ''
+      GROUP BY club
+    """)
+    data = {row[0]: row[1] for row in c.fetchall()}
+    conn.close()
+    return data
+
+def get_user_club_counts(user_id):
+    """{club_key: сколько уникальных карт собрал пользователь}"""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""
+        SELECT COALESCE(cards.team_en, cards.team_ru) AS club,
+               COUNT(DISTINCT cards.id)
+          FROM inventory
+          JOIN cards ON inventory.card_id = cards.id
+         WHERE inventory.user_id = ?
+           AND club IS NOT NULL AND club != ''
+      GROUP BY club
+    """, (user_id,))
+    data = {row[0]: row[1] for row in c.fetchall()}
+    conn.close()
+    return data
+
+def get_user_club_cards(user_id, club):
+    """
+    Возвращает:
+        • список dict-ов карт с полем "count" (сколько экземпляров)
+        • число уникальных карт этого клуба у пользователя
+    """
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("""
+        SELECT cards.id
+          FROM inventory
+          JOIN cards ON inventory.card_id = cards.id
+         WHERE inventory.user_id = ?
+           AND COALESCE(cards.team_en, cards.team_ru) = ?
+    """, (user_id, club))
+    ids = [r[0] for r in c.fetchall()]
     conn.close()
 
-    count_dict = Counter(card_ids)
+    count_dict = Counter(ids)
+    cards = []
+    for cid, cnt in count_dict.items():
+        card = get_card_from_cache(cid)
+        if not card:
+            continue
+        card_copy = card.copy()
+        card_copy["count"] = cnt
+        cards.append(card_copy)
 
-    if not card_ids:
-        await context.bot.send_message(chat_id, "У тебя нет карточек.")
-        return
+    return cards, len(set(ids))
 
     # Получаем инфу о каждой карточке для сортировки
     card_info = []
@@ -1319,6 +1385,114 @@ async def topref(update: Update, context: ContextTypes.DEFAULT_TYPE):
         name = f"@{username}" if username else f"ID:{i}"
         text += f"{i}. {name} — {count} приглашённых {medal}\n"
     await update.message.reply_text(text)
+
+@require_subscribe
+async def clubs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    all_clubs = get_all_club_abbrs()
+    totals = get_club_total_counts()
+    user_counts = get_user_club_counts(user_id)
+    buttons = []
+    for club in all_clubs:
+        total = totals.get(club, 0)
+        have = user_counts.get(club, 0)
+        text = f"{club} ({have}/{total})"
+        buttons.append([InlineKeyboardButton(text, callback_data=f"club_sel_{club}")])
+    markup = InlineKeyboardMarkup(buttons)
+    await update.message.reply_text("Выбери клуб:", reply_markup=markup)
+
+async def send_club_card_page(chat_id, user_id, context, edit_message=False, message_id=None):
+    data = user_club_carousel[user_id]
+    idx = data["idx"]
+    cards = data["cards"]
+    total = data["total"]
+    card = cards[idx]
+
+    name = card['name']
+    img = card['img']
+    rarity = card['rarity']
+    stats = card['stats']
+    club = card['team_en'] or card['team_ru'] or "—"
+    pos_ru = pos_to_rus(card['pos'] or '')
+    flag = flag_from_iso3(card['country'])
+    iso = (card['country'] or '').upper()
+    count = card['count']
+
+    caption = f"*{name}*"
+    if count > 1:
+        caption += f" x{count}"
+    caption += "\n"
+    caption += f"*Клуб:* {club}\n"
+    caption += f"_Позиция:_ {pos_ru}\n"
+    caption += f"*Страна:* {flag} `{iso}`\n"
+    caption += f"*Редкость:* {RARITY_RU.get(rarity, rarity)}\n"
+    caption += "────────────\n"
+    caption += wrap_line(stats or "")
+    caption += f"\n\n[{idx+1} из {len(cards)} | Всего карт клуба: {total}]"
+
+    markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬅️", callback_data="club_prev"), InlineKeyboardButton("➡️", callback_data="club_next")]
+    ])
+
+    try:
+        if edit_message and message_id:
+            await context.bot.edit_message_media(
+                chat_id=chat_id,
+                message_id=message_id,
+                media=InputMediaPhoto(media=img, caption=caption, parse_mode="Markdown"),
+                reply_markup=markup
+            )
+        else:
+            await context.bot.send_photo(
+                chat_id=chat_id,
+                photo=img,
+                caption=caption,
+                parse_mode="Markdown",
+                reply_markup=markup
+            )
+    except BadRequest:
+        if edit_message and message_id:
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=f"⚠️ Картинка карточки недоступна, но вот информация:\n\n{caption}",
+                reply_markup=markup,
+                parse_mode="Markdown"
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"⚠️ Картинка карточки недоступна, но вот информация:\n\n{caption}",
+                reply_markup=markup,
+                parse_mode="Markdown"
+            )
+
+async def club_carousel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    data = query.data
+    if data.startswith("club_sel_"):
+        club = data.split("_", 2)[2]
+        cards, total = get_user_club_cards(user_id, club)
+        if not cards:
+            await query.answer("Нет карт этого клуба.", show_alert=True)
+            return
+        user_club_carousel[user_id] = {"cards": cards, "idx": 0, "total": total}
+        await send_club_card_page(query.message.chat_id, user_id, context, edit_message=True, message_id=query.message.message_id)
+        await query.answer()
+        return
+    if user_id not in user_club_carousel:
+        await query.answer()
+        return
+    if data == "club_next":
+        user_club_carousel[user_id]["idx"] = (user_club_carousel[user_id]["idx"] + 1) % len(user_club_carousel[user_id]["cards"])
+    elif data == "club_prev":
+        user_club_carousel[user_id]["idx"] = (user_club_carousel[user_id]["idx"] - 1) % len(user_club_carousel[user_id]["cards"])
+    await send_club_card_page(query.message.chat_id, user_id, context, edit_message=True, message_id=query.message.message_id)
+    try:
+        await query.answer()
+    except BadRequest:
+        pass
 
 async def mycards(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -1562,6 +1736,7 @@ def main():
     application.add_handler(CommandHandler("card", card))
     application.add_handler(CommandHandler("mycards", mycards))
     application.add_handler(CommandHandler("mycards2", mycards2))
+    application.add_handler(CommandHandler(["club", "clubs"], clubs))
     application.add_handler(CommandHandler("myid", myid))
     application.add_handler(CommandHandler("nocooldown", nocooldown))
     application.add_handler(CommandHandler("deletecard", deletecard))
@@ -1573,6 +1748,7 @@ def main():
     application.add_handler(CallbackQueryHandler(trade_callback, pattern="^trade_"))
     application.add_handler(CallbackQueryHandler(mycards_pagination_callback, pattern="^mycards_(next|prev)$"))
     application.add_handler(CallbackQueryHandler(carousel_callback, pattern="^(next|prev)$"))
+    application.add_handler(CallbackQueryHandler(club_carousel_callback, pattern="^club_(.+)$"))
     application.add_handler(CallbackQueryHandler(trade_page_callback, pattern="^trade_page_(prev|next)$"))
     application.add_handler(CommandHandler("editcard", editcard))
     application.add_handler(CallbackQueryHandler(editcard_callback, pattern="^(adminedit|admineditpage|admineditstat|admineditrarity|adminsetrarity)_?"))
