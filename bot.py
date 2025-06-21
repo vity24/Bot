@@ -1126,48 +1126,68 @@ def get_full_cards_for_user(user_id):
 
 # --- Работа с клубами ---
 def get_all_club_abbrs():
+    """Список всех клубов, даже если заполнено только team_ru."""
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT DISTINCT team_en FROM cards WHERE team_en IS NOT NULL AND team_en != ''")
+    c.execute("""
+        SELECT DISTINCT COALESCE(team_en, team_ru) AS club
+          FROM cards
+         WHERE club IS NOT NULL AND club != ''
+    """)
     clubs = sorted(row[0] for row in c.fetchall())
     conn.close()
     return clubs
 
 def get_club_total_counts():
+    """{club_key: уникальных карт в базе} по обеим колонкам."""
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT team_en, COUNT(DISTINCT id) FROM cards WHERE team_en IS NOT NULL AND team_en != '' GROUP BY team_en")
+    c.execute("""
+        SELECT COALESCE(team_en, team_ru) AS club,
+               COUNT(DISTINCT id)
+          FROM cards
+         WHERE club IS NOT NULL AND club != ''
+      GROUP BY club
+    """)
     data = {row[0]: row[1] for row in c.fetchall()}
     conn.close()
     return data
 
 def get_user_club_counts(user_id):
+    """{club_key: сколько уникальных карт собрал пользователь}"""
     conn = get_db()
     c = conn.cursor()
     c.execute("""
-        SELECT cards.team_en, COUNT(DISTINCT cards.id)
-        FROM inventory
-        JOIN cards ON inventory.card_id = cards.id
-        WHERE inventory.user_id=? AND cards.team_en IS NOT NULL AND cards.team_en!=''
-        GROUP BY cards.team_en
+        SELECT COALESCE(cards.team_en, cards.team_ru) AS club,
+               COUNT(DISTINCT cards.id)
+          FROM inventory
+          JOIN cards ON inventory.card_id = cards.id
+         WHERE inventory.user_id = ?
+           AND club IS NOT NULL AND club != ''
+      GROUP BY club
     """, (user_id,))
     data = {row[0]: row[1] for row in c.fetchall()}
     conn.close()
     return data
 
 def get_user_club_cards(user_id, club):
+    """
+    Возвращает:
+        • список dict-ов карт с полем "count" (сколько экземпляров)
+        • число уникальных карт этого клуба у пользователя
+    """
     conn = get_db()
     c = conn.cursor()
-    c.execute(
-        """
+    c.execute("""
         SELECT cards.id
-        FROM inventory JOIN cards ON inventory.card_id = cards.id
-        WHERE inventory.user_id=? AND cards.team_en=?
-    """,
-        (user_id, club),
-    )
+          FROM inventory
+          JOIN cards ON inventory.card_id = cards.id
+         WHERE inventory.user_id = ?
+           AND COALESCE(cards.team_en, cards.team_ru) = ?
+    """, (user_id, club))
     ids = [r[0] for r in c.fetchall()]
     conn.close()
+
     count_dict = Counter(ids)
     cards = []
     for cid, cnt in count_dict.items():
@@ -1177,21 +1197,8 @@ def get_user_club_cards(user_id, club):
         card_copy = card.copy()
         card_copy["count"] = cnt
         cards.append(card_copy)
-    return cards, len(ids)
 
-async def send_cards_page(chat_id, user_id, context, page=0, edit_message=False, message_id=None):
-    # Получаем все карточки пользователя
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT card_id FROM inventory WHERE user_id=?", (user_id,))
-    card_ids = [r[0] for r in c.fetchall()]
-    conn.close()
-
-    count_dict = Counter(card_ids)
-
-    if not card_ids:
-        await context.bot.send_message(chat_id, "У тебя нет карточек.")
-        return
+    return cards, len(set(ids))
 
     # Получаем инфу о каждой карточке для сортировки
     card_info = []
