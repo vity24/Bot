@@ -52,6 +52,7 @@ RARITY_SQL_MULT = (
     "WHEN 'rare' THEN 1.3 "
     "ELSE 1 END"
 )
+
 async def is_user_subscribed(bot, user_id):
     try:
         for ch in CHANNELS:
@@ -1578,7 +1579,10 @@ async def admin_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(f"✅ Поле <b>stats</b> карточки <b>{name}</b> обновлено на: <code>{new_stats}</code>", parse_mode='HTML')
         admin_edit_state.pop(user_id, None)
 
-def main():
+from telegram import BotCommand
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
+
+def main() -> None:
     setup_db()
     application = Application.builder().token(TOKEN).build()
 
@@ -1605,12 +1609,25 @@ def main():
     application.add_handler(CommandHandler("invite", invite))
     application.add_handler(CommandHandler("topref", topref))
 
+bot_commands = [
+        BotCommand("start",   "Приветствие и справка"),
+        BotCommand("card",    "Получить карточку"),
+        BotCommand("mycards", "Коллекция списком"),
+        BotCommand("mycards2","Коллекция каруселью"),
+        BotCommand("me",      "Мой рейтинг"),
+        BotCommand("top",     "ТОП-10"),
+        BotCommand("top50",   "ТОП-50"),
+        BotCommand("trade",   "Начать обмен"),
+        BotCommand("invite",  "Пригласить друга"),
+        BotCommand("topref",  "ТОП рефералов"),
+    ]
+async def _set_menu(app):
+        await app.bot.set_my_commands(bot_commands)
+application.post_init(_set_menu)   # ← меню установится при запуске
 
+    # 3. запускаем бота (ни одного await!)
+application.run_polling()
 
-
-
-
-    application.run_polling()
 
 if __name__ == '__main__':
     main()
