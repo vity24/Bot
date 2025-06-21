@@ -176,8 +176,49 @@ ISO3_TO_FLAG = {
     "SVN": "🇸🇮", "FRA": "🇫🇷", "LTU": "🇱🇹"
 }
 
+# Эмодзи и аббревиатуры клубов NHL (используются в коллекциях)
+CLUB_BRANDING = {
+    "Pittsburgh Penguins": ("🐧", "PIT"),
+    "Питтсбург Пингвинз": ("🐧", "PIT"),
+    "Tampa Bay Lightning": ("⚡️", "TBL"),
+    "Тампа-Бэй Лайтнинг": ("⚡️", "TBL"),
+    "New York Rangers": ("🦓", "NYR"),
+    "Нью-Йорк Рейнджерс": ("🦓", "NYR"),
+    "Anaheim Ducks": ("🦆", "ANA"),
+    "Arizona Coyotes": ("🦊", "ARI"),
+    "Boston Bruins": ("🐻", "BOS"),
+    "Buffalo Sabres": ("🦬", "BUF"),
+    "Calgary Flames": ("🔥", "CGY"),
+    "Carolina Hurricanes": ("🌪️", "CAR"),
+    "Chicago Blackhawks": ("🪶", "CHI"),
+    "Colorado Avalanche": ("⛰️", "COL"),
+    "Columbus Blue Jackets": ("🎖️", "CBJ"),
+    "Dallas Stars": ("⭐️", "DAL"),
+    "Detroit Red Wings": ("🚗", "DET"),
+    "Edmonton Oilers": ("🛢️", "EDM"),
+    "Florida Panthers": ("🐆", "FLA"),
+    "Los Angeles Kings": ("👑", "LAK"),
+    "Minnesota Wild": ("🌲", "MIN"),
+    "Montreal Canadiens": ("🎩", "MTL"),
+    "Nashville Predators": ("🐯", "NSH"),
+    "New Jersey Devils": ("😈", "NJD"),
+    "New York Islanders": ("🏝️", "NYI"),
+    "Ottawa Senators": ("🏛️", "OTT"),
+    "Philadelphia Flyers": ("✈️", "PHI"),
+    "San Jose Sharks": ("🦈", "SJS"),
+    "Seattle Kraken": ("🐙", "SEA"),
+    "St. Louis Blues": ("🎵", "STL"),
+    "Toronto Maple Leafs": ("🍁", "TOR"),
+    "Vancouver Canucks": ("🐋", "VAN"),
+    "Vegas Golden Knights": ("⚔️", "VGK"),
+    "Washington Capitals": ("🦅", "WSH"),
+    "Winnipeg Jets": ("✈️", "WPG"),
+}
+
 admin_no_cooldown = set()
 user_carousel = {}
+club_carousels = {}
+user_club_lists = {}
 
 # --- Новое для листалки mycards
 user_cards_pagination = {}
@@ -243,6 +284,7 @@ def main():
         BotCommand("card", "Получить новую карточку"),
         BotCommand("mycards", "Коллекция (листай кнопками)"),
         BotCommand("mycards2", "Коллекция по одной карточке"),
+        BotCommand("clubs", "Коллекции по клубам"),
         BotCommand("myid", "Узнать свой user_id"),
         BotCommand("me", "Твой рейтинг и прогресс"),
         BotCommand("trade", "Обмен картами по ID"),
@@ -1265,6 +1307,61 @@ async def send_card_page(chat_id, user_id, context, edit_message=False, message_
                 parse_mode="Markdown"
             )
 
+async def send_club_card_page(chat_id, user_id, context, edit_message=False, message_id=None):
+    data = club_carousels[user_id]
+    idx = data["idx"]
+    cards = data["cards"]
+    club = data["club"]
+    card = cards[idx]
+
+    name = card['name']
+    img = card['img']
+    rarity = card['rarity']
+    count = card['count']
+
+    emoji, abbr = CLUB_BRANDING.get(club, ("", club))
+    caption = f"{emoji} *{abbr}*\n*{name}*"
+    if count > 1:
+        caption += f" x{count}"
+    caption += f"\n*Клуб:* {club}\n*Редкость:* {RARITY_RU.get(rarity, rarity)}\n[{idx+1} из {len(cards)}]"
+
+    markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬅️", callback_data="club_prev"), InlineKeyboardButton("➡️", callback_data="club_next")]
+    ])
+
+    try:
+        if edit_message and message_id:
+            await context.bot.edit_message_media(
+                chat_id=chat_id,
+                message_id=message_id,
+                media=InputMediaPhoto(media=img, caption=caption, parse_mode="Markdown"),
+                reply_markup=markup
+            )
+        else:
+            await context.bot.send_photo(
+                chat_id=chat_id,
+                photo=img,
+                caption=caption,
+                parse_mode="Markdown",
+                reply_markup=markup
+            )
+    except BadRequest:
+        if edit_message and message_id:
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=f"⚠️ Картинка карточки недоступна, но вот информация:\n\n{caption}",
+                reply_markup=markup,
+                parse_mode="Markdown"
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"⚠️ Картинка карточки недоступна, но вот информация:\n\n{caption}",
+                reply_markup=markup,
+                parse_mode="Markdown"
+            )
+
 def get_referral_count(user_id):
     conn = get_db()
     c = conn.cursor()
@@ -1379,6 +1476,60 @@ async def carousel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         edit_message=True,
         message_id=query.message.message_id
     )
+
+@require_subscribe
+async def clubs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    cards, _ = get_full_cards_for_user(user_id)
+    if not cards:
+        await update.message.reply_text("У тебя ещё нет карточек — получи первую командой /card!")
+        return
+    club_map = {}
+    for card in cards:
+        club = (card['team_ru'] or card['team_en'] or '—').strip()
+        club_map.setdefault(club, []).append(card)
+
+    user_club_lists[user_id] = {}
+    buttons = []
+    row = []
+    for idx, (club, cl_cards) in enumerate(sorted(club_map.items())):
+        user_club_lists[user_id][str(idx)] = {"club": club, "cards": cl_cards}
+        emoji, abbr = CLUB_BRANDING.get(club, ("", club[:3].upper()))
+        text = f"{emoji} {abbr} ({len(cl_cards)})"
+        row.append(InlineKeyboardButton(text, callback_data=f"clubsel_{idx}"))
+        if len(row) == 3:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+
+    markup = InlineKeyboardMarkup(buttons)
+    await update.message.reply_text("Твои клубы:", reply_markup=markup)
+
+async def club_select_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    key = query.data.split('_')[1]
+    if user_id not in user_club_lists or key not in user_club_lists[user_id]:
+        await query.answer()
+        return
+    data = user_club_lists[user_id][key]
+    club_carousels[user_id] = {"cards": data["cards"], "idx": 0, "club": data["club"]}
+    await query.answer()
+    await send_club_card_page(query.message.chat_id, user_id, context)
+
+async def club_carousel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    if user_id not in club_carousels:
+        await query.answer()
+        return
+    if query.data == "club_next":
+        club_carousels[user_id]["idx"] = (club_carousels[user_id]["idx"] + 1) % len(club_carousels[user_id]["cards"])
+    else:
+        club_carousels[user_id]["idx"] = (club_carousels[user_id]["idx"] - 1) % len(club_carousels[user_id]["cards"])
+    await query.answer()
+    await send_club_card_page(query.message.chat_id, user_id, context, edit_message=True, message_id=query.message.message_id)
 
 async def myid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Твой Telegram user_id: {update.effective_user.id}")
@@ -1562,6 +1713,7 @@ def main():
     application.add_handler(CommandHandler("card", card))
     application.add_handler(CommandHandler("mycards", mycards))
     application.add_handler(CommandHandler("mycards2", mycards2))
+    application.add_handler(CommandHandler("clubs", clubs))
     application.add_handler(CommandHandler("myid", myid))
     application.add_handler(CommandHandler("nocooldown", nocooldown))
     application.add_handler(CommandHandler("deletecard", deletecard))
@@ -1573,6 +1725,8 @@ def main():
     application.add_handler(CallbackQueryHandler(trade_callback, pattern="^trade_"))
     application.add_handler(CallbackQueryHandler(mycards_pagination_callback, pattern="^mycards_(next|prev)$"))
     application.add_handler(CallbackQueryHandler(carousel_callback, pattern="^(next|prev)$"))
+    application.add_handler(CallbackQueryHandler(club_carousel_callback, pattern="^club_(next|prev)$"))
+    application.add_handler(CallbackQueryHandler(club_select_callback, pattern="^clubsel_"))
     application.add_handler(CallbackQueryHandler(trade_page_callback, pattern="^trade_page_(prev|next)$"))
     application.add_handler(CommandHandler("editcard", editcard))
     application.add_handler(CallbackQueryHandler(editcard_callback, pattern="^(adminedit|admineditpage|admineditstat|admineditrarity|adminsetrarity)_?"))
