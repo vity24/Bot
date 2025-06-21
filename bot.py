@@ -1200,7 +1200,9 @@ def get_user_club_cards(user_id, club_key):
         card_copy = card.copy()
         card_copy["count"] = cnt
         cards.append(card_copy)
-    return cards, len(set(ids))
+
+    # return list of cards, unique count and total count
+    return cards, len(set(ids)), sum(count_dict.values())
 
 async def send_cards_page(chat_id, user_id, context, page=0, edit_message=False, message_id=None):
     # Получаем все карточки пользователя
@@ -1410,17 +1412,13 @@ async def clubs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     totals = get_club_total_counts()
     user_cnt = get_user_club_counts(uid)
 
-    buttons, row = [], []
+    buttons = []
     for key in all_keys:
         have = user_cnt.get(key, 0)
         total = totals.get(key, 0)
         label = f"{key} {have}/{total}"
-        row.append(InlineKeyboardButton(label, callback_data=f"club_sel_{key}"))
-        if len(row) == 2:
-            buttons.append(row)
-            row = []
-    if row:
-        buttons.append(row)
+        # One button per row
+        buttons.append([InlineKeyboardButton(label, callback_data=f"club_sel_{key}")])
 
     await update.message.reply_text(
         "Выбери клуб:",
@@ -1496,18 +1494,19 @@ async def club_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
     except BadRequest:
         pass
-    cards, unique = get_user_club_cards(user_id, club_key)
+    cards, unique, all_count = get_user_club_cards(user_id, club_key)
     if not cards:
         await query.edit_message_text("У тебя нет карточек этого клуба.")
         return
-    lines = []
-    for card in cards:
-        line = f"{card['name']} ({RARITY_RU.get(card['rarity'], card['rarity'])})"
-        if card['count'] > 1:
-            line += f" x{card['count']}"
-        lines.append(line)
-    text = f"Карточки {club_key} ({unique} уник.):\n" + "\n".join(lines)
-    await query.edit_message_text(text)
+
+    # prepare carousel data and remove selection message
+    user_carousel[user_id] = {"cards": cards, "idx": 0, "all_count": all_count}
+    try:
+        await query.delete_message()
+    except Exception:
+        pass
+
+    await send_card_page(query.message.chat_id, user_id, context)
 
 async def myid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Твой Telegram user_id: {update.effective_user.id}")
