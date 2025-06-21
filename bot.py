@@ -250,6 +250,7 @@ def main():
         BotCommand("top50", "ТОП-50 игроков"),
         BotCommand("invite", "Пригласи друга и получи ачивки!"),
         BotCommand("topref", "ТОП по приглашениям"),
+        BotCommand("clubs", "Карточки по клубам"),
     ]
     # 👇 Устанавливаем команды в меню Telegram
     updater.bot.set_my_commands(bot_commands)
@@ -593,6 +594,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/trade <user_id> — обмен картами по Telegram ID\n"
         "/invite — пригласи друга и получи ачивки!\n"
         "/topref — топ по приглашениям\n"
+        "/clubs — карточки по клубам\n"
     )
     if is_admin(user_id):
         text += (
@@ -1120,6 +1122,86 @@ def get_full_cards_for_user(user_id):
 
     return cards, sum(count_dict.values())
 
+def get_all_club_keys():
+    """Return sorted list of all club keys from team_en or team_ru."""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute(
+        """
+        SELECT DISTINCT COALESCE(team_en, team_ru) AS club
+          FROM cards
+         WHERE club IS NOT NULL AND club != ''
+        """
+    )
+    clubs = sorted(r[0] for r in c.fetchall())
+    conn.close()
+    return clubs
+
+
+def get_club_total_counts():
+    conn = get_db()
+    c = conn.cursor()
+    c.execute(
+        """
+        SELECT COALESCE(team_en, team_ru) AS club,
+               COUNT(DISTINCT id)
+          FROM cards
+         WHERE club IS NOT NULL AND club != ''
+      GROUP BY club
+        """
+    )
+    data = {row[0]: row[1] for row in c.fetchall()}
+    conn.close()
+    return data
+
+
+def get_user_club_counts(user_id):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute(
+        """
+        SELECT COALESCE(cards.team_en, cards.team_ru) AS club,
+               COUNT(DISTINCT cards.id)
+          FROM inventory
+          JOIN cards ON inventory.card_id = cards.id
+         WHERE inventory.user_id = ?
+           AND club IS NOT NULL AND club != ''
+      GROUP BY club
+        """,
+        (user_id,)
+    )
+    data = {row[0]: row[1] for row in c.fetchall()}
+    conn.close()
+    return data
+
+
+def get_user_club_cards(user_id, club_key):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute(
+        """
+        SELECT cards.id
+          FROM inventory
+          JOIN cards ON inventory.card_id = cards.id
+         WHERE inventory.user_id = ?
+           AND COALESCE(cards.team_en, cards.team_ru) = ?
+        """,
+        (user_id, club_key),
+    )
+    ids = [r[0] for r in c.fetchall()]
+    conn.close()
+
+    count_dict = Counter(ids)
+    cards = []
+    for cid, cnt in count_dict.items():
+        card = get_card_from_cache(cid)
+        if not card:
+            continue
+        card_copy = card.copy()
+        card_copy["count"] = cnt
+        cards.append(card_copy)
+    return cards, len(set(ids))
+
 async def send_cards_page(chat_id, user_id, context, page=0, edit_message=False, message_id=None):
     # Получаем все карточки пользователя
     conn = get_db()
@@ -1320,6 +1402,31 @@ async def topref(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"{i}. {name} — {count} приглашённых {medal}\n"
     await update.message.reply_text(text)
 
+
+@require_subscribe
+async def clubs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    all_keys = get_all_club_keys()
+    totals = get_club_total_counts()
+    user_cnt = get_user_club_counts(uid)
+
+    buttons, row = [], []
+    for key in all_keys:
+        have = user_cnt.get(key, 0)
+        total = totals.get(key, 0)
+        label = f"{key} {have}/{total}"
+        row.append(InlineKeyboardButton(label, callback_data=f"club_sel_{key}"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+
+    await update.message.reply_text(
+        "Выбери клуб:",
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
+
 async def mycards(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat_id = update.message.chat_id
@@ -1379,6 +1486,28 @@ async def carousel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         edit_message=True,
         message_id=query.message.message_id
     )
+
+
+async def club_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    club_key = query.data.replace("club_sel_", "", 1)
+    try:
+        await query.answer()
+    except BadRequest:
+        pass
+    cards, unique = get_user_club_cards(user_id, club_key)
+    if not cards:
+        await query.edit_message_text("У тебя нет карточек этого клуба.")
+        return
+    lines = []
+    for card in cards:
+        line = f"{card['name']} ({RARITY_RU.get(card['rarity'], card['rarity'])})"
+        if card['count'] > 1:
+            line += f" x{card['count']}"
+        lines.append(line)
+    text = f"Карточки {club_key} ({unique} уник.):\n" + "\n".join(lines)
+    await query.edit_message_text(text)
 
 async def myid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Твой Telegram user_id: {update.effective_user.id}")
@@ -1580,6 +1709,9 @@ def main():
     application.add_handler(CallbackQueryHandler(check_subscribe_callback, pattern="^check_subscribe$"))
     application.add_handler(CommandHandler("invite", invite))
     application.add_handler(CommandHandler("topref", topref))
+    application.add_handler(CommandHandler("clubs", clubs))
+    application.add_handler(CommandHandler("club", clubs))
+    application.add_handler(CallbackQueryHandler(club_callback, pattern="^club_sel_"))
 
 
 
