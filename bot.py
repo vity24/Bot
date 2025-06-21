@@ -91,6 +91,62 @@ RARITY_MULTIPLIERS = {
     "legendary": 4
 }
 
+# --- Кэш для карточек ---
+CARD_FIELDS = [
+    "id", "name", "img", "pos", "country", "born", "height",
+    "weight", "rarity", "stats", "team_en", "team_ru"
+]
+CARD_CACHE = {}
+
+def load_card_cache(force=False):
+    """Загружаем все карточки в память для сокращения обращений к БД."""
+    global CARD_CACHE
+    if CARD_CACHE and not force:
+        return
+    conn = get_db()
+    c = conn.cursor()
+    c.execute(
+        "SELECT id, name, img, pos, country, born, height, weight, rarity, stats, team_en, team_ru FROM cards"
+    )
+    rows = c.fetchall()
+    conn.close()
+    CARD_CACHE = {
+        row[0]: dict(zip(CARD_FIELDS, row))
+        for row in rows
+    }
+
+def get_card_from_cache(card_id):
+    """Возвращает информацию о карте из кэша, при необходимости подгружает её."""
+    if card_id not in CARD_CACHE:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute(
+            "SELECT id, name, img, pos, country, born, height, weight, rarity, stats, team_en, team_ru FROM cards WHERE id=?",
+            (card_id,),
+        )
+        row = c.fetchone()
+        conn.close()
+        if row:
+            CARD_CACHE[card_id] = dict(zip(CARD_FIELDS, row))
+        else:
+            return None
+    return CARD_CACHE.get(card_id)
+
+def refresh_card_cache(card_id):
+    """Обновляем кэш для конкретной карты или очищаем её."""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute(
+        "SELECT id, name, img, pos, country, born, height, weight, rarity, stats, team_en, team_ru FROM cards WHERE id=?",
+        (card_id,),
+    )
+    row = c.fetchone()
+    conn.close()
+    if row:
+        CARD_CACHE[card_id] = dict(zip(CARD_FIELDS, row))
+    else:
+        CARD_CACHE.pop(card_id, None)
+
 POS_RU = {
     "C": "Центр",
     "LW": "Левый нап.",
@@ -162,6 +218,7 @@ def setup_db():
     # ... остальной код создания таблиц ...
     conn.commit()
     conn.close()
+    load_card_cache(force=True)
 
 def main():
     setup_db()
@@ -268,17 +325,17 @@ def get_user_cards(user_id):
     c = conn.cursor()
     c.execute("SELECT card_id FROM inventory WHERE user_id=?", (user_id,))
     rows = [r[0] for r in c.fetchall()]
+    conn.close()
+
     card_counts = Counter(rows)
     cards = []
     for card_id, count in card_counts.items():
-        c.execute('SELECT name, rarity FROM cards WHERE id=?', (card_id,))
-        cr = c.fetchone()
-        if cr:
-            s = f"{cr[0]} ({RARITY_RU.get(cr[1], cr[1])})"
+        card = get_card_from_cache(card_id)
+        if card:
+            s = f"{card['name']} ({RARITY_RU.get(card['rarity'], card['rarity'])})"
             if count > 1:
                 s += f" x{count}"
             cards.append(s)
-    conn.close()
     return cards
 
 def is_admin(user_id):
@@ -328,18 +385,21 @@ def calculate_user_score(user_id):
     c = conn.cursor()
     c.execute("SELECT card_id FROM inventory WHERE user_id=?", (user_id,))
     card_ids = [row[0] for row in c.fetchall()]
+    conn.close()
+
     counts = Counter(card_ids)
     total_score = 0
     for card_id, count in counts.items():
-        c.execute("SELECT pos, stats, rarity FROM cards WHERE id=?", (card_id,))
-        row = c.fetchone()
-        if not row:
+        card = get_card_from_cache(card_id)
+        if not card:
             continue
-        pos, stats, rarity = row
+        pos = card["pos"]
+        stats = card["stats"]
+        rarity = card["rarity"]
         points = parse_points(stats, pos)
         mult = RARITY_MULTIPLIERS.get(rarity, 1)
         total_score += points * mult * count
-    conn.close()
+
     return total_score
 
 def get_user_rank(user_id):
@@ -455,7 +515,6 @@ def resetweek(update, context):
 # -------- start с проверкой на админа ----------
 
 def start(update, context):
-    setup_db()
     user_id = update.effective_user.id
     username = update.effective_user.username or ""
 
@@ -619,14 +678,11 @@ def show_trade_cards(context, user_id, prompt):
         return
     buttons = []
     for card_id, count in cards:
-        conn = get_db()
-        c = conn.cursor()
-        c.execute("SELECT name, rarity FROM cards WHERE id=?", (card_id,))
-        row = c.fetchone()
-        conn.close()
-        if not row:
+        card = get_card_from_cache(card_id)
+        if not card:
             continue  # если карты нет в базе — не выводим
-        name, rarity = row
+        name = card["name"]
+        rarity = card["rarity"]
         btn = [make_card_button(card_id, name, rarity, count)]
         buttons.append(btn)
     if not buttons:
@@ -1005,13 +1061,9 @@ def finalize_multi_trade(context, acceptor_id, initiator_id, offer1, offer2):
     pending_trades.pop(acceptor_id, None)
 
 def get_card_name_rarity(card_id):
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT name, rarity FROM cards WHERE id=?", (card_id,))
-    row = c.fetchone()
-    conn.close()
-    if row:
-        return row[0], row[1]
+    card = get_card_from_cache(card_id)
+    if card:
+        return card["name"], card["rarity"]
     return "?", "common"
 
 def get_rarity_emoji(rarity):
@@ -1042,19 +1094,18 @@ def get_full_cards_for_user(user_id):
     c = conn.cursor()
     c.execute("SELECT card_id FROM inventory WHERE user_id=?", (user_id,))
     ids = [r[0] for r in c.fetchall()]
-    count_dict = Counter(ids)
-    unique_ids = list(count_dict.keys())
-    cards = []
-    for cid in unique_ids:
-        c.execute("SELECT name, img, rarity, stats, team_ru, team_en, pos, country FROM cards WHERE id=?", (cid,))
-        row = c.fetchone()
-        if row:
-            cards.append({
-                "name": row[0], "img": row[1], "rarity": row[2],
-                "stats": row[3], "team_ru": row[4], "team_en": row[5],
-                "pos": row[6], "country": row[7], "count": count_dict[cid]
-            })
     conn.close()
+
+    count_dict = Counter(ids)
+    cards = []
+    for cid, cnt in count_dict.items():
+        card = get_card_from_cache(cid)
+        if not card:
+            continue
+        card_copy = card.copy()
+        card_copy["count"] = cnt
+        cards.append(card_copy)
+
     return cards, sum(count_dict.values())
 
 def send_cards_page(chat_id, user_id, context, page=0, edit_message=False, message_id=None):
@@ -1063,8 +1114,9 @@ def send_cards_page(chat_id, user_id, context, page=0, edit_message=False, messa
     c = conn.cursor()
     c.execute("SELECT card_id FROM inventory WHERE user_id=?", (user_id,))
     card_ids = [r[0] for r in c.fetchall()]
-    count_dict = Counter(card_ids)
     conn.close()
+
+    count_dict = Counter(card_ids)
 
     if not card_ids:
         context.bot.send_message(chat_id, "У тебя нет карточек.")
@@ -1072,17 +1124,14 @@ def send_cards_page(chat_id, user_id, context, page=0, edit_message=False, messa
 
     # Получаем инфу о каждой карточке для сортировки
     card_info = []
-    conn = get_db()
-    c = conn.cursor()
     for card_id, count in count_dict.items():
-        c.execute("SELECT name, rarity FROM cards WHERE id=?", (card_id,))
-        row = c.fetchone()
-        if not row:
+        card = get_card_from_cache(card_id)
+        if not card:
             continue
-        name, rarity = row
+        name = card["name"]
+        rarity = card["rarity"]
         rarity_index = RARITY_ORDER.get(rarity, 99)
         card_info.append((rarity_index, name, card_id, count, rarity))
-    conn.close()
 
     # Сортируем: сначала по редкости, потом по имени
     card_info.sort(key=lambda x: (x[0], x[1]))
@@ -1353,6 +1402,7 @@ def deletecard(update, context):
         c.execute('DELETE FROM cards WHERE id = ?', (row[0],))
         conn.commit()
         update.message.reply_text(f"Карточка игрока '{name}' удалена.")
+        refresh_card_cache(row[0])
     conn.close()
 
     admin_edit_state = {}  # user_id: {step, card_id}
@@ -1426,12 +1476,8 @@ def editcard_callback(update, context):
             [InlineKeyboardButton("Назад", callback_data="admineditpage_0")]
         ])
         # Получим имя карточки
-        conn = get_db()
-        c = conn.cursor()
-        c.execute("SELECT name FROM cards WHERE id=?", (card_id,))
-        row = c.fetchone()
-        name = row[0] if row else "карточка"
-        conn.close()
+        card = get_card_from_cache(card_id)
+        name = card["name"] if card else "карточка"
         text = f"Выбрана: <b>{name}</b>\nЧто редактировать?"
         query.edit_message_text(text, reply_markup=markup, parse_mode='HTML')
         query.answer()
@@ -1470,6 +1516,7 @@ def editcard_callback(update, context):
         conn.commit()
         name = row[0] if row else "карточка"
         conn.close()
+        refresh_card_cache(card_id)
         query.edit_message_text(f"✅ Редкость карточки <b>{name}</b> обновлена на: {RARITY_RU[rarity]}", parse_mode='HTML')
         admin_edit_state.pop(user_id, None)
         query.answer()
@@ -1491,6 +1538,7 @@ def admin_text_handler(update, context):
         conn.commit()
         name = row[0] if row else "карточка"
         conn.close()
+        refresh_card_cache(card_id)
         update.message.reply_text(f"✅ Поле <b>stats</b> карточки <b>{name}</b> обновлено на: <code>{new_stats}</code>", parse_mode='HTML')
         admin_edit_state.pop(user_id, None)
 
