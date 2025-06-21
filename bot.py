@@ -3,6 +3,55 @@ import time
 import random
 import sqlite3
 import re
+
+TOKEN = "7649956181:AAErINkWzZJ7BofoorAHxc2fLXMPoaCjkQM"
+ADMINS = {445479731, 6463889816}
+CARD_COOLDOWN = 3 * 60 * 60  # 3 часа
+CHANNELS = [
+    {"username": "@HOCKEY_CARDS_NHL", "name": "Подпишись на канал", "link": "https://t.me/HOCKEY_CARDS_NHL"},
+    {"username": "@Hockey_cards_nhl_chat", "name": "Подпишись на чат", "link": "https://t.me/Hockey_cards_nhl_chat"},
+]
+
+RARITY_RU = {
+    "legendary": "Легендарная ⭐️",
+    "mythic":    "Мифическая 🟥",
+    "epic":      "Эпическая 💎",
+    "rare":      "Редкая 🔵",
+    "common":    "Обычная 🟢",
+}
+
+RARITY_ORDER = {
+    "legendary": 0,
+    "mythic": 1,
+    "epic": 2,
+    "rare": 3,
+    "common": 4,
+}
+
+RARITY_WEIGHTS = {
+    "legendary": 1,
+    "mythic":    2,
+    "epic":      6,
+    "rare":      18,
+    "common":    73,
+}
+
+RARITY_MULTIPLIERS = {
+    "common": 1,
+    "rare": 1.3,
+    "epic": 1.8,
+    "mythic": 2.5,
+    "legendary": 4,
+}
+
+RARITY_SQL_MULT = (
+    "CASE cards.rarity "
+    "WHEN 'legendary' THEN 4 "
+    "WHEN 'mythic' THEN 2.5 "
+    "WHEN 'epic' THEN 1.8 "
+    "WHEN 'rare' THEN 1.3 "
+    "ELSE 1 END"
+)
 async def is_user_subscribed(bot, user_id):
     try:
         for ch in CHANNELS:
@@ -30,6 +79,9 @@ from telegram import (
 )
 from collections import Counter
 from functools import wraps
+
+def is_admin(user_id):
+    return user_id in ADMINS
 async def check_subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
@@ -63,51 +115,11 @@ def require_subscribe(func):
     return wrapper
 
 
-TOKEN = "7649956181:AAErINkWzZJ7BofoorAHxc2fLXMPoaCjkQM"
-ADMINS = {445479731, 6463889816}
-CARD_COOLDOWN = 3 * 60 * 60  # 3 часа
-CHANNELS = [
-    {"username": "@HOCKEY_CARDS_NHL", "name": "Подпишись на канал", "link": "https://t.me/HOCKEY_CARDS_NHL"},
-    {"username": "@Hockey_cards_nhl_chat", "name": "Подпишись на чат", "link": "https://t.me/Hockey_cards_nhl_chat"}
-]
-
-
-RARITY_RU = {
-    "legendary": "Легендарная ⭐️",
-    "mythic":    "Мифическая 🟥",
-    "epic":      "Эпическая 💎",
-    "rare":      "Редкая 🔵",
-    "common":    "Обычная 🟢",
-}
-
-RARITY_ORDER = {
-    "legendary": 0,
-    "mythic": 1,
-    "epic": 2,
-    "rare": 3,
-    "common": 4
-}
-
-RARITY_WEIGHTS = {
-    "legendary": 1,
-    "mythic":    2,
-    "epic":      6,
-    "rare":      18,
-    "common":    73,
-}
-
-RARITY_MULTIPLIERS = {
-    "common": 1,
-    "rare": 1.3,
-    "epic": 1.8,
-    "mythic": 2.5,
-    "legendary": 4
-}
-
 # --- Кэш для карточек ---
 CARD_FIELDS = [
     "id", "name", "img", "pos", "country", "born", "height",
-    "weight", "rarity", "stats", "team_en", "team_ru"
+    "weight", "rarity", "stats", "team_en", "team_ru",
+    "updated_at", "points"
 ]
 CARD_CACHE = {}
 
@@ -119,7 +131,7 @@ def load_card_cache(force=False):
     conn = get_db()
     c = conn.cursor()
     c.execute(
-        "SELECT id, name, img, pos, country, born, height, weight, rarity, stats, team_en, team_ru FROM cards"
+        "SELECT id, name, img, pos, country, born, height, weight, rarity, stats, team_en, team_ru, updated_at, points FROM cards"
     )
     rows = c.fetchall()
     conn.close()
@@ -130,11 +142,20 @@ def load_card_cache(force=False):
 
 def get_card_from_cache(card_id):
     """Возвращает информацию о карте из кэша, при необходимости подгружает её."""
+    if card_id in CARD_CACHE:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute("SELECT updated_at FROM cards WHERE id=?", (card_id,))
+        row = c.fetchone()
+        conn.close()
+        if row and row[0] != CARD_CACHE[card_id].get("updated_at"):
+            CARD_CACHE.pop(card_id, None)
+
     if card_id not in CARD_CACHE:
         conn = get_db()
         c = conn.cursor()
         c.execute(
-            "SELECT id, name, img, pos, country, born, height, weight, rarity, stats, team_en, team_ru FROM cards WHERE id=?",
+            "SELECT id, name, img, pos, country, born, height, weight, rarity, stats, team_en, team_ru, updated_at, points FROM cards WHERE id=?",
             (card_id,),
         )
         row = c.fetchone()
@@ -150,7 +171,7 @@ def refresh_card_cache(card_id):
     conn = get_db()
     c = conn.cursor()
     c.execute(
-        "SELECT id, name, img, pos, country, born, height, weight, rarity, stats, team_en, team_ru FROM cards WHERE id=?",
+        "SELECT id, name, img, pos, country, born, height, weight, rarity, stats, team_en, team_ru, updated_at, points FROM cards WHERE id=?",
         (card_id,),
     )
     row = c.fetchone()
@@ -228,38 +249,6 @@ def setup_db():
         c.execute("ALTER TABLE users ADD COLUMN invited_by INTEGER DEFAULT NULL")
     except sqlite3.OperationalError:
         pass
-    # ... остальной код создания таблиц ...
-    conn.commit()
-    conn.close()
-    load_card_cache(force=True)
-
-def main():
-    setup_db()
-    application = Application.builder().token(TOKEN).build()
-
-    # 👇 Здесь формируем список команд для меню Telegram
-    bot_commands = [
-        BotCommand("start", "Приветствие и справка"),
-        BotCommand("card", "Получить новую карточку"),
-        BotCommand("mycards", "Коллекция (листай кнопками)"),
-        BotCommand("mycards2", "Коллекция по одной карточке"),
-        BotCommand("myid", "Узнать свой user_id"),
-        BotCommand("me", "Твой рейтинг и прогресс"),
-        BotCommand("trade", "Обмен картами по ID"),
-        BotCommand("top", "ТОП-10 игроков"),
-        BotCommand("top50", "ТОП-50 игроков"),
-        BotCommand("invite", "Пригласи друга и получи ачивки!"),
-        BotCommand("topref", "ТОП по приглашениям"),
-    ]
-    # 👇 Устанавливаем команды в меню Telegram
-    updater.bot.set_my_commands(bot_commands)
-    conn = get_db()
-    c = conn.cursor()
-    c.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT, last_card_time INTEGER)')
-    try:
-        c.execute("ALTER TABLE users ADD COLUMN last_week_score INTEGER DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
     c.execute('CREATE TABLE IF NOT EXISTS inventory (user_id INTEGER, card_id INTEGER, time_got INTEGER)')
     c.execute('''
         CREATE TABLE IF NOT EXISTS cards (
@@ -283,8 +272,18 @@ def main():
         c.execute("ALTER TABLE cards ADD COLUMN team_ru TEXT")
     except sqlite3.OperationalError:
         pass
+    try:
+        c.execute("ALTER TABLE cards ADD COLUMN updated_at INTEGER DEFAULT (strftime('%s','now'))")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE cards ADD COLUMN points REAL")
+    except sqlite3.OperationalError:
+        pass
+    c.execute('CREATE INDEX IF NOT EXISTS idx_inventory_user ON inventory(user_id)')
     conn.commit()
     conn.close()
+    load_card_cache(force=True)
 
 def wrap_line(text, length=35):
     words = text.split()
@@ -318,17 +317,29 @@ def get_random_card():
     c = conn.cursor()
     rarity = weighted_random_rarity()
     c.execute(
-        'SELECT * FROM cards WHERE rarity=? '
+        'SELECT id FROM cards WHERE rarity=? '
         'AND img NOT LIKE "%default-skater.png%" '
         'AND img NOT LIKE "%default-goalie.png%" '
-        'AND img != "" AND img IS NOT NULL '
-        'ORDER BY RANDOM() LIMIT 1',
+        'AND img != "" AND img IS NOT NULL',
         (rarity,)
+    )
+    ids = [r[0] for r in c.fetchall()]
+    if not ids:
+        conn.close()
+        return None
+    card_id = random.choice(ids)
+    c.execute(
+        'SELECT id, name, img, pos, country, born, height, weight, rarity, stats, team_en, team_ru, updated_at, points FROM cards WHERE id=?',
+        (card_id,)
     )
     row = c.fetchone()
     conn.close()
     if row:
-        fields = ["id", "name", "img", "pos", "country", "born", "height", "weight", "rarity", "stats", "team_en", "team_ru"]
+        fields = [
+            "id", "name", "img", "pos", "country", "born", "height",
+            "weight", "rarity", "stats", "team_en", "team_ru",
+            "updated_at", "points"
+        ]
         return dict(zip(fields, row))
     return None
 
@@ -349,9 +360,6 @@ def get_user_cards(user_id):
                 s += f" x{count}"
             cards.append(s)
     return cards
-
-def is_admin(user_id):
-    return user_id in ADMINS
 
 async def send_ranking_push(user_id, context, chat_id):
     # теперь пушим всем (можно и админам)
@@ -395,43 +403,43 @@ def parse_points(stats, pos):
 def calculate_user_score(user_id):
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT card_id FROM inventory WHERE user_id=?", (user_id,))
-    card_ids = [row[0] for row in c.fetchall()]
+    c.execute(
+        f"""
+        SELECT COALESCE(SUM(cards.points * {RARITY_SQL_MULT}), 0)
+        FROM inventory
+        JOIN cards ON inventory.card_id = cards.id
+        WHERE inventory.user_id = ?
+        """,
+        (user_id,)
+    )
+    row = c.fetchone()
     conn.close()
-
-    counts = Counter(card_ids)
-    total_score = 0
-    for card_id, count in counts.items():
-        card = get_card_from_cache(card_id)
-        if not card:
-            continue
-        pos = card["pos"]
-        stats = card["stats"]
-        rarity = card["rarity"]
-        points = parse_points(stats, pos)
-        mult = RARITY_MULTIPLIERS.get(rarity, 1)
-        total_score += points * mult * count
-
-    return total_score
+    return row[0] or 0
 
 def get_user_rank(user_id):
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT id FROM users")
-    # Исключаем админов из рейтинга
-    user_ids = [row[0] for row in c.fetchall() if row[0] not in ADMINS]
-    scores = []
-    for uid in user_ids:
-        score = calculate_user_score(uid)
-        scores.append((uid, score))
-    scores.sort(key=lambda x: x[1], reverse=True)
-    total = len(scores)
-    for idx, (uid, _) in enumerate(scores):
-        if uid == user_id:
-            rank = idx + 1
-            break
+    my_score = calculate_user_score(user_id)
+    placeholders = ",".join(["?"] * len(ADMINS)) if ADMINS else ""
+    exclude = f"WHERE user_id NOT IN ({placeholders})" if ADMINS else ""
+    query = f"""
+        SELECT COUNT(*) FROM (
+            SELECT user_id, SUM(cards.points * {RARITY_SQL_MULT}) AS s
+            FROM inventory
+            JOIN cards ON inventory.card_id = cards.id
+            {exclude}
+            GROUP BY user_id
+        ) WHERE s > ?
+    """
+    params = list(ADMINS) if ADMINS else []
+    params.append(my_score)
+    c.execute(query, params)
+    rank = c.fetchone()[0] + 1
+    if ADMINS:
+        c.execute(f"SELECT COUNT(DISTINCT user_id) FROM inventory WHERE user_id NOT IN ({placeholders})", tuple(ADMINS))
     else:
-        rank = total
+        c.execute("SELECT COUNT(DISTINCT user_id) FROM inventory")
+    total = c.fetchone()[0]
     conn.close()
     return rank, total
 
@@ -448,16 +456,24 @@ def get_weekly_progress(user_id):
 def get_top_users(limit=10):
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT id, username FROM users")
-    # Исключаем админов из топа
-    users = [(uid, uname) for (uid, uname) in c.fetchall() if uid not in ADMINS]
-    user_scores = []
-    for uid, uname in users:
-        score = calculate_user_score(uid)
-        user_scores.append((uid, uname, score))
-    user_scores.sort(key=lambda x: x[2], reverse=True)
+    placeholders = ",".join(["?"] * len(ADMINS)) if ADMINS else ""
+    where = f"WHERE users.id NOT IN ({placeholders})" if ADMINS else ""
+    query = f"""
+        SELECT users.id, users.username, COALESCE(SUM(cards.points * {RARITY_SQL_MULT}),0) AS score
+        FROM users
+        LEFT JOIN inventory ON users.id = inventory.user_id
+        LEFT JOIN cards ON inventory.card_id = cards.id
+        {where}
+        GROUP BY users.id
+        ORDER BY score DESC
+        LIMIT ?
+    """
+    params = list(ADMINS) if ADMINS else []
+    params.append(limit)
+    c.execute(query, params)
+    rows = c.fetchall()
     conn.close()
-    return user_scores[:limit]
+    return rows
 
 # ------- КОМАНДЫ РЕЙТИНГА ----------
 @require_subscribe
@@ -1522,7 +1538,10 @@ async def editcard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         conn = get_db()
         c = conn.cursor()
-        c.execute("UPDATE cards SET rarity = ? WHERE id = ?", (rarity, card_id))
+        c.execute(
+            "UPDATE cards SET rarity = ?, updated_at=strftime('%s','now') WHERE id = ?",
+            (rarity, card_id),
+        )
         c.execute("SELECT name FROM cards WHERE id = ?", (card_id,))
         row = c.fetchone()
         conn.commit()
@@ -1544,11 +1563,16 @@ async def admin_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         new_stats = update.message.text
         conn = get_db()
         c = conn.cursor()
-        c.execute("UPDATE cards SET stats = ? WHERE id = ?", (new_stats, card_id))
-        c.execute("SELECT name FROM cards WHERE id = ?", (card_id,))
+        c.execute("SELECT pos, name FROM cards WHERE id = ?", (card_id,))
         row = c.fetchone()
+        pos = row[0] if row else ""
+        name = row[1] if row else "карточка"
+        points = parse_points(new_stats, pos)
+        c.execute(
+            "UPDATE cards SET stats = ?, points = ?, updated_at=strftime('%s','now') WHERE id = ?",
+            (new_stats, points, card_id),
+        )
         conn.commit()
-        name = row[0] if row else "карточка"
         conn.close()
         refresh_card_cache(card_id)
         await update.message.reply_text(f"✅ Поле <b>stats</b> карточки <b>{name}</b> обновлено на: <code>{new_stats}</code>", parse_mode='HTML')
