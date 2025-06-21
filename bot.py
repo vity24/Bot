@@ -3,30 +3,43 @@ import time
 import random
 import sqlite3
 import re
-def is_user_subscribed(bot, user_id):
+async def is_user_subscribed(bot, user_id):
     try:
         for ch in CHANNELS:
-            member = bot.get_chat_member(ch["username"], user_id)
+            member = await bot.get_chat_member(ch["username"], user_id)
             if member.status not in ("member", "administrator", "creator"):
                 return False
         return True
     except Exception:
         return False
-from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    filters,
+    ContextTypes,
+)
 from telegram.error import BadRequest
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, BotCommand
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputMediaPhoto,
+    BotCommand,
+    Update,
+)
 from collections import Counter
 from functools import wraps
-def check_subscribe_callback(update, context):
+async def check_subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
 
-    if is_user_subscribed(context.bot, user_id):
+    if await is_user_subscribed(context.bot, user_id):
         try:
-            query.delete_message()
+            await query.delete_message()
         except Exception:
             pass
-        context.bot.send_message(
+        await context.bot.send_message(
             chat_id=user_id,
             text=(
                 "🎉 Подписка на оба канала подтверждена!\n\n"
@@ -34,19 +47,19 @@ def check_subscribe_callback(update, context):
             )
         )
     else:
-        query.answer("❗️ Подпишись на оба канала и попробуй снова.", show_alert=True)
+        await query.answer("❗️ Подпишись на оба канала и попробуй снова.", show_alert=True)
 
 def require_subscribe(func):
     @wraps(func)
-    def wrapper(update, context, *args, **kwargs):
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
         user_id = update.effective_user.id
         # вот тут — если админ, не проверяем подписку
         if is_admin(user_id):
-            return func(update, context, *args, **kwargs)
-        if not is_user_subscribed(context.bot, user_id):
-            start(update, context)
+            return await func(update, context, *args, **kwargs)
+        if not await is_user_subscribed(context.bot, user_id):
+            await start(update, context)
             return
-        return func(update, context, *args, **kwargs)
+        return await func(update, context, *args, **kwargs)
     return wrapper
 
 
@@ -222,8 +235,7 @@ def setup_db():
 
 def main():
     setup_db()
-    updater = Updater(TOKEN, use_context=True)
-    dp = updater.dispatcher
+    application = Application.builder().token(TOKEN).build()
 
     # 👇 Здесь формируем список команд для меню Telegram
     bot_commands = [
@@ -341,7 +353,7 @@ def get_user_cards(user_id):
 def is_admin(user_id):
     return user_id in ADMINS
 
-def send_ranking_push(user_id, context, chat_id):
+async def send_ranking_push(user_id, context, chat_id):
     # теперь пушим всем (можно и админам)
     rank, total = get_user_rank(user_id)
     if rank > total:
@@ -362,7 +374,7 @@ def send_ranking_push(user_id, context, chat_id):
             msg += f"До топ-5 всего {need} очк{'а' if need%10 in [2,3,4] and need%100 not in [12,13,14] else 'ов'}, не сдавайся! 💪"
         else:
             msg += "Уже почти в топе!"
-    context.bot.send_message(chat_id, msg)
+    await context.bot.send_message(chat_id, msg)
 
 # ------- ОЧКИ и РЕЙТИНГИ -----------
 def parse_points(stats, pos):
@@ -449,10 +461,10 @@ def get_top_users(limit=10):
 
 # ------- КОМАНДЫ РЕЙТИНГА ----------
 @require_subscribe
-def me(update, context):
+async def me(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if is_admin(user_id):
-        update.message.reply_text("У админов нет профиля в рейтинге.")
+        await update.message.reply_text("У админов нет профиля в рейтинге.")
         return
     rank, total = get_user_rank(user_id)
     progress = get_weekly_progress(user_id)
@@ -469,10 +481,10 @@ def me(update, context):
     achv = get_referral_achievements(referrals)
     msg += f"\n\n👥 Приглашено: {referrals}\n{achv}"
     # ====================================
-    update.message.reply_text(msg)
+    await update.message.reply_text(msg)
 
 @require_subscribe
-def top(update, context):
+async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
     top10 = get_top_users(limit=10)
     text = (
         "🏆 ТОП-10 коллекционеров NHL:\n"
@@ -484,22 +496,22 @@ def top(update, context):
         medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else ""
         username = (f"@{uname}" if uname else f"ID:{uid}")
         text += f"{i}. {username} — {int(score)} {medal}\n"
-    update.message.reply_text(text)
+    await update.message.reply_text(text)
 
 @require_subscribe
-def top50(update, context):
+async def top50(update: Update, context: ContextTypes.DEFAULT_TYPE):
     top50 = get_top_users(limit=50)
     text = "🏆 ТОП-50 коллекционеров NHL:\n\n"
     for i, (uid, uname, score) in enumerate(top50, 1):
         medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else ""
         username = (f"@{uname}" if uname else f"ID:{uid}")
         text += f"{i}. {username} — {int(score)} {medal}\n"
-    update.message.reply_text(text)
+    await update.message.reply_text(text)
 
-def resetweek(update, context):
+async def resetweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not is_admin(user_id):
-        update.message.reply_text("⛔️ Нет прав для этой команды.")
+        await update.message.reply_text("⛔️ Нет прав для этой команды.")
         return
     conn = get_db()
     c = conn.cursor()
@@ -510,16 +522,16 @@ def resetweek(update, context):
         c.execute("UPDATE users SET last_week_score=? WHERE id=?", (score, uid))
     conn.commit()
     conn.close()
-    update.message.reply_text("✅ Еженедельные приросты обновлены для всех игроков.")
+    await update.message.reply_text("✅ Еженедельные приросты обновлены для всех игроков.")
 
 # -------- start с проверкой на админа ----------
 
-def start(update, context):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     username = update.effective_user.username or ""
 
     # --- Проверка подписки ---
-    if not is_user_subscribed(context.bot, user_id):
+    if not await is_user_subscribed(context.bot, user_id):
         buttons = [
             [InlineKeyboardButton(f"🔔 {ch['name']}", url=ch['link'])] for ch in CHANNELS
         ]
@@ -536,7 +548,7 @@ def start(update, context):
             "1. Подпишись на оба канала\n"
             "2. Жми 'Проверить подписку'"
         )
-        update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="Markdown")
         return
 
     # --- Всё что ниже — ОБЯЗАТЕЛЬНО внутри функции! ---
@@ -558,7 +570,7 @@ def start(update, context):
                 c.execute("UPDATE users SET last_card_time=0 WHERE id=?", (referrer_id,))
                 conn.commit()
                 try:
-                    context.bot.send_message(
+                    await context.bot.send_message(
                         referrer_id,
                         "🎉 По твоей ссылке зашёл новый игрок!\n\n"
                         "⏳ Твой кулдаун на карточку сброшен. Можешь открыть новую прямо сейчас! Приглашай друзей и собирай коллекцию быстрее."
@@ -590,10 +602,10 @@ def start(update, context):
             "/resetweek — обновить недельные приросты\n"
             "/editcard — редактировать картоки (очки и редкость)"
         )
-    update.message.reply_text(text)
+    await update.message.reply_text(text)
 
 @require_subscribe
-def card(update, context):
+async def card(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     now = int(time.time())
     conn = get_db()
@@ -604,7 +616,7 @@ def card(update, context):
     if user_id not in admin_no_cooldown:
         if now - last < CARD_COOLDOWN:
             mins = (CARD_COOLDOWN - (now - last)) // 60
-            update.message.reply_text(
+            await update.message.reply_text(
                 f"⏳ Следующую карточку можно получить через {mins} мин.\n"
                 "💡 Если твой друг зайдёт по твоей ссылке из /invite, кулдаун сбросится сразу!"
             )
@@ -612,7 +624,7 @@ def card(update, context):
             return
     card_obj = get_random_card()
     if not card_obj:
-        update.message.reply_text("В базе нет карточек с фото или данного раритета.")
+        await update.message.reply_text("В базе нет карточек с фото или данного раритета.")
         conn.close()
         return
     c.execute("INSERT INTO inventory (user_id, card_id, time_got) VALUES (?, ?, ?)", (user_id, card_obj["id"], now))
@@ -636,14 +648,14 @@ def card(update, context):
     ]))
 
     try:
-        context.bot.send_photo(update.message.chat_id, card_obj.get('img', ''), caption=caption, parse_mode='Markdown')
+        await context.bot.send_photo(update.message.chat_id, card_obj.get('img', ''), caption=caption, parse_mode='Markdown')
     except BadRequest:
-        update.message.reply_text(
+        await update.message.reply_text(
             f"⚠️ Картинка карточки недоступна, но вот информация:\n{caption}",
             parse_mode='Markdown'
         )
 
-    send_ranking_push(user_id, context, update.message.chat_id)
+    await send_ranking_push(user_id, context, update.message.chat_id)
 
 # --- TRADE (ОБМЕНЫ) ---
 
@@ -666,14 +678,14 @@ def make_card_button(card_id, name, rarity, count):
     text = f"{rarity_emoji} {name} {count_str}{special}"
     return InlineKeyboardButton(text, callback_data=f"trade_offer_{card_id}")
 
-def show_trade_cards(context, user_id, prompt):
+async def show_trade_cards(context, user_id, prompt):
     conn = get_db()
     c = conn.cursor()
     c.execute("SELECT card_id, COUNT(*) FROM inventory WHERE user_id=? GROUP BY card_id", (user_id,))
     cards = c.fetchall()
     conn.close()
     if not cards:
-        context.bot.send_message(user_id, "У тебя нет карточек для обмена.")
+        await context.bot.send_message(user_id, "У тебя нет карточек для обмена.")
         pending_trades.pop(user_id, None)
         return
     buttons = []
@@ -686,13 +698,13 @@ def show_trade_cards(context, user_id, prompt):
         btn = [make_card_button(card_id, name, rarity, count)]
         buttons.append(btn)
     if not buttons:
-        context.bot.send_message(user_id, "Нет доступных карт для обмена.")
+        await context.bot.send_message(user_id, "Нет доступных карт для обмена.")
         pending_trades.pop(user_id, None)
         return
     markup = InlineKeyboardMarkup(buttons)
-    context.bot.send_message(user_id, prompt, reply_markup=markup)
+    await context.bot.send_message(user_id, prompt, reply_markup=markup)
 
-def show_trade_selector(context, user_id, prompt, is_acceptor=False, page=0, edit_message_id=None):
+async def show_trade_selector(context, user_id, prompt, is_acceptor=False, page=0, edit_message_id=None):
     conn = get_db()
     c = conn.cursor()
     c.execute("SELECT card_id FROM inventory WHERE user_id=?", (user_id,))
@@ -701,7 +713,7 @@ def show_trade_selector(context, user_id, prompt, is_acceptor=False, page=0, edi
     conn.close()
 
     if not card_ids:
-        context.bot.send_message(user_id, "У тебя нет карточек для обмена.")
+        await context.bot.send_message(user_id, "У тебя нет карточек для обмена.")
         pending_trades.pop(user_id, None)
         return
 
@@ -750,13 +762,13 @@ def show_trade_selector(context, user_id, prompt, is_acceptor=False, page=0, edi
     markup = InlineKeyboardMarkup(markup_list)
 
     if edit_message_id:
-        context.bot.edit_message_reply_markup(
+        await context.bot.edit_message_reply_markup(
             chat_id=user_id,
             message_id=edit_message_id,
             reply_markup=markup
         )
     else:
-        context.bot.send_message(user_id, prompt, reply_markup=markup)
+        await context.bot.send_message(user_id, prompt, reply_markup=markup)
 
 
 # --- MULTI TRADE ---
@@ -765,14 +777,14 @@ MAX_TRADE_CARDS = 5
 TRADE_CARDS_PER_PAGE = 20
 
 @require_subscribe
-def trade(update, context):
+async def trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not context.args or not context.args[0].isdigit():
-        update.message.reply_text("Используй: /trade <user_id>\nПример: /trade 123456789")
+        await update.message.reply_text("Используй: /trade <user_id>\nПример: /trade 123456789")
         return
     partner_id = int(context.args[0])
     if partner_id == user_id:
-        update.message.reply_text("Нельзя обмениваться с собой!")
+        await update.message.reply_text("Нельзя обмениваться с собой!")
         return
 
     conn = get_db()
@@ -781,7 +793,7 @@ def trade(update, context):
     row = c.fetchone()
     conn.close()
     if not row:
-        update.message.reply_text("Пользователь не найден.")
+        await update.message.reply_text("Пользователь не найден.")
         return
 
     pending_trades[user_id] = {
@@ -793,13 +805,13 @@ def trade(update, context):
         'partner_id': user_id,
         'stage': 'accept_offer'
     }
-    show_trade_selector(context, user_id, "Выбери до 5 своих карточек для обмена (можно несколько):")
+    await show_trade_selector(context, user_id, "Выбери до 5 своих карточек для обмена (можно несколько):")
 
-def trade_page_callback(update, context):
+async def trade_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
     if user_id not in pending_trades:
-        query.answer("Нет активного обмена.")
+        await query.answer("Нет активного обмена.")
         return
     trade_state = pending_trades[user_id]
     page = trade_state.get('page', 0)
@@ -808,22 +820,22 @@ def trade_page_callback(update, context):
     elif query.data == "trade_page_next":
         page = page + 1
     try:
-        query.answer()
+        await query.answer()
     except BadRequest:
         return
-    show_trade_selector(
+    await show_trade_selector(
         context, user_id,
         "Выбери до 5 своих карточек для обмена (можно несколько):",
         page=page,
         edit_message_id=query.message.message_id
     )
 
-def trade_callback(update, context):
+async def trade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
 
     if user_id not in pending_trades:
-        query.answer("Нет активного обмена.")
+        await query.answer("Нет активного обмена.")
         return
 
     trade_state = pending_trades[user_id]
@@ -838,14 +850,14 @@ def trade_callback(update, context):
             page = max(0, page - 1)
         else:
             page = page + 1
-        show_trade_selector(
+        await show_trade_selector(
             context, user_id,
             "Выбери до 5 своих карточек для обмена (можно несколько):",
             page=page,
             edit_message_id=query.message.message_id
         )
         try:
-            query.answer()
+            await query.answer()
         except BadRequest:
             pass
         return
@@ -858,18 +870,18 @@ def trade_callback(update, context):
             sel.remove(card_id)
         else:
             if len(sel) >= MAX_TRADE_CARDS:
-                query.answer(f"Можно выбрать не более {MAX_TRADE_CARDS} карт.")
+                await query.answer(f"Можно выбрать не более {MAX_TRADE_CARDS} карт.")
                 return
             sel.add(card_id)
         trade_state['selected'] = sel
-        show_trade_selector(
+        await show_trade_selector(
             context, user_id,
             "Выбери до 5 своих карточек для обмена (можно несколько):",
             page=trade_state.get('page', 0),
             edit_message_id=query.message.message_id
         )
         try:
-            query.answer()
+            await query.answer()
         except BadRequest:
             pass
         return
@@ -878,7 +890,7 @@ def trade_callback(update, context):
     if data == "trade_confirm":
         if stage == "initiator_selecting":
             if not trade_state.get('selected'):
-                query.answer("Выбери хотя бы одну карту для обмена.")
+                await query.answer("Выбери хотя бы одну карту для обмена.")
                 return
             pending_trades[user_id]['stage'] = 'waiting_accept'
             pending_trades[partner_id] = {
@@ -896,13 +908,13 @@ def trade_callback(update, context):
                 [InlineKeyboardButton("Принять", callback_data="trade_accept_offer")],
                 [InlineKeyboardButton("Отклонить", callback_data="trade_reject_offer")]
             ])
-            context.bot.send_message(partner_id, text, reply_markup=markup)
-            query.edit_message_text("Ожидание решения второго участника...")
+            await context.bot.send_message(partner_id, text, reply_markup=markup)
+            await query.edit_message_text("Ожидание решения второго участника...")
             return
 
         elif stage == "acceptor_selecting":
             if not trade_state.get('selected'):
-                query.answer("Выбери хотя бы одну карту для обмена.")
+                await query.answer("Выбери хотя бы одну карту для обмена.")
                 return
             offer1 = set(trade_state['offer'])
             offer2 = set(trade_state['selected'])
@@ -914,16 +926,16 @@ def trade_callback(update, context):
                 "offer2": offer2,
                 "confirmed": set()
             }
-            show_trade_confirmation(context, partner_id, user_id, offer1, offer2)
-            show_trade_confirmation(context, user_id, partner_id, offer1, offer2)
-            query.edit_message_text("Ожидание подтверждения обмена обоими игроками.")
+            await show_trade_confirmation(context, partner_id, user_id, offer1, offer2)
+            await show_trade_confirmation(context, user_id, partner_id, offer1, offer2)
+            await query.edit_message_text("Ожидание подтверждения обмена обоими игроками.")
             return
 
     # Второй игрок соглашается — ему показывается выбор своих карт (правильная обработка!)
     if data == "trade_accept_offer":
         trade_state['stage'] = 'acceptor_selecting'
         trade_state['selected'] = set()
-        show_trade_selector(
+        await show_trade_selector(
             context, user_id,
             "Выбери до 5 своих карточек для обмена (можно несколько):",
             is_acceptor=True,
@@ -934,24 +946,24 @@ def trade_callback(update, context):
 
     # Второй игрок отклоняет — обмен отменяется у обоих
     if data == "trade_reject_offer":
-        context.bot.send_message(user_id, "Ты отклонил обмен.")
-        context.bot.send_message(partner_id, "Твой обмен был отклонён.")
+        await context.bot.send_message(user_id, "Ты отклонил обмен.")
+        await context.bot.send_message(partner_id, "Твой обмен был отклонён.")
         pending_trades.pop(user_id, None)
         pending_trades.pop(partner_id, None)
         try:
-            query.edit_message_text("Обмен отклонён.")
+            await query.edit_message_text("Обмен отклонён.")
         except:
             pass
         return
 
     # Отмена обмена
     if data == "trade_cancel":
-        context.bot.send_message(user_id, "Обмен отменён.")
-        context.bot.send_message(partner_id, "Обмен отменён второй стороной.")
+        await context.bot.send_message(user_id, "Обмен отменён.")
+        await context.bot.send_message(partner_id, "Обмен отменён второй стороной.")
         pending_trades.pop(user_id, None)
         pending_trades.pop(partner_id, None)
         try:
-            query.edit_message_text("Обмен отменён.")
+            await query.edit_message_text("Обмен отменён.")
         except:
             pass
         return
@@ -965,12 +977,12 @@ def trade_callback(update, context):
                 found = k
                 break
         if not found:
-            query.answer("Нет ожидающего подтверждения обмена.")
+            await query.answer("Нет ожидающего подтверждения обмена.")
             return
         trade_confirmations[found]["confirmed"].add(user_id)
         if len(trade_confirmations[found]["confirmed"]) == 2:
             vals = trade_confirmations.pop(found)
-            finalize_multi_trade(
+            await finalize_multi_trade(
                 context,
                 vals["acceptor"],  # второй игрок
                 vals["initiator"], # первый игрок
@@ -978,7 +990,7 @@ def trade_callback(update, context):
                 vals["offer2"]
             )
         else:
-            query.edit_message_text("Ожидаем подтверждение второго участника...")
+            await query.edit_message_text("Ожидаем подтверждение второго участника...")
         return
 
     if data == "trade_final_cancel":
@@ -988,19 +1000,19 @@ def trade_callback(update, context):
                 found = k
                 break
         if not found:
-            query.answer("Нет ожидающего подтверждения обмена.")
+            await query.answer("Нет ожидающего подтверждения обмена.")
             return
         vals = trade_confirmations.pop(found)
-        context.bot.send_message(vals["initiator"], "Обмен отменён одним из участников.")
-        context.bot.send_message(vals["acceptor"], "Обмен отменён одним из участников.")
+        await context.bot.send_message(vals["initiator"], "Обмен отменён одним из участников.")
+        await context.bot.send_message(vals["acceptor"], "Обмен отменён одним из участников.")
         pending_trades.pop(vals["initiator"], None)
         pending_trades.pop(vals["acceptor"], None)
-        query.edit_message_text("Обмен отменён.")
+        await query.edit_message_text("Обмен отменён.")
         return
 
-    query.answer("Неизвестное действие.")
+    await query.answer("Неизвестное действие.")
 
-def show_trade_confirmation(context, uid, other_uid, offer1, offer2):
+async def show_trade_confirmation(context, uid, other_uid, offer1, offer2):
     # Кто ты: инициатор или акцептор
     if uid == other_uid:
         return
@@ -1028,9 +1040,9 @@ def show_trade_confirmation(context, uid, other_uid, offer1, offer2):
         [InlineKeyboardButton("✅ Подтвердить", callback_data="trade_final_confirm")],
         [InlineKeyboardButton("❌ Отменить", callback_data="trade_final_cancel")]
     ])
-    context.bot.send_message(uid, text, reply_markup=markup)
+    await context.bot.send_message(uid, text, reply_markup=markup)
 
-def finalize_multi_trade(context, acceptor_id, initiator_id, offer1, offer2):
+async def finalize_multi_trade(context, acceptor_id, initiator_id, offer1, offer2):
     # offer1 — карты инициатора, offer2 — карты acceptor
     for cid in offer1:
         remove_card(initiator_id, cid)
@@ -1043,14 +1055,14 @@ def finalize_multi_trade(context, acceptor_id, initiator_id, offer1, offer2):
     offer2_names = [get_card_name_rarity(cid)[0] for cid in offer2]
     nhl_phrase = random.choice(TRADE_NHL_PHRASES)
 
-    context.bot.send_message(
+    await context.bot.send_message(
         initiator_id,
         f"{nhl_phrase}\n\n"
         f"Ты обменялся!\n"
         f"Отдал: {', '.join(offer1_names)}\n"
         f"Получил: {', '.join(offer2_names)}"
     )
-    context.bot.send_message(
+    await context.bot.send_message(
         acceptor_id,
         f"{nhl_phrase}\n\n"
         f"Ты обменялся!\n"
@@ -1108,7 +1120,7 @@ def get_full_cards_for_user(user_id):
 
     return cards, sum(count_dict.values())
 
-def send_cards_page(chat_id, user_id, context, page=0, edit_message=False, message_id=None):
+async def send_cards_page(chat_id, user_id, context, page=0, edit_message=False, message_id=None):
     # Получаем все карточки пользователя
     conn = get_db()
     c = conn.cursor()
@@ -1119,7 +1131,7 @@ def send_cards_page(chat_id, user_id, context, page=0, edit_message=False, messa
     count_dict = Counter(card_ids)
 
     if not card_ids:
-        context.bot.send_message(chat_id, "У тебя нет карточек.")
+        await context.bot.send_message(chat_id, "У тебя нет карточек.")
         return
 
     # Получаем инфу о каждой карточке для сортировки
@@ -1142,7 +1154,7 @@ def send_cards_page(chat_id, user_id, context, page=0, edit_message=False, messa
     page_cards = card_info[start:end]
 
     if not page_cards:
-        context.bot.send_message(chat_id, "На этой странице нет карточек.")
+        await context.bot.send_message(chat_id, "На этой странице нет карточек.")
         return
 
     # Готовим текст
@@ -1173,19 +1185,19 @@ def send_cards_page(chat_id, user_id, context, page=0, edit_message=False, messa
     )
 
     if edit_message and message_id:
-        context.bot.edit_message_text(
+        await context.bot.edit_message_text(
             chat_id=chat_id,
             message_id=message_id,
             text=text,
             reply_markup=markup
         )
     else:
-        context.bot.send_message(
+        await context.bot.send_message(
             chat_id=chat_id,
             text=text,
             reply_markup=markup
         )
-def send_card_page(chat_id, user_id, context, edit_message=False, message_id=None):
+async def send_card_page(chat_id, user_id, context, edit_message=False, message_id=None):
     # Получаем текущий индекс карточки в "карусели"
     data = user_carousel[user_id]
     idx = data["idx"]
@@ -1221,14 +1233,14 @@ def send_card_page(chat_id, user_id, context, edit_message=False, message_id=Non
 
     try:
         if edit_message and message_id:
-            context.bot.edit_message_media(
+            await context.bot.edit_message_media(
                 chat_id=chat_id,
                 message_id=message_id,
                 media=InputMediaPhoto(media=img, caption=caption, parse_mode="Markdown"),
                 reply_markup=markup
             )
         else:
-            context.bot.send_photo(
+            await context.bot.send_photo(
                 chat_id=chat_id,
                 photo=img,
                 caption=caption,
@@ -1238,7 +1250,7 @@ def send_card_page(chat_id, user_id, context, edit_message=False, message_id=Non
     except BadRequest:
         # Если не удалось отправить фото — fallback на текст
         if edit_message and message_id:
-            context.bot.edit_message_text(
+            await context.bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,
                 text=f"⚠️ Картинка карточки недоступна, но вот информация:\n\n{caption}",
@@ -1246,7 +1258,7 @@ def send_card_page(chat_id, user_id, context, edit_message=False, message_id=Non
                 parse_mode="Markdown"
             )
         else:
-            context.bot.send_message(
+            await context.bot.send_message(
                 chat_id=chat_id,
                 text=f"⚠️ Картинка карточки недоступна, но вот информация:\n\n{caption}",
                 reply_markup=markup,
@@ -1275,7 +1287,7 @@ def get_referral_achievements(count):
         out.append("🏆 50 приглашённых — Вдохновитель толпы")
     return "\n".join(out) if out else "— Пока нет ачивок"
 
-def invite(update, context):
+async def invite(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     link = f"https://t.me/{context.bot.username}?start={user_id}"
     referrals = get_referral_count(user_id)
@@ -1288,17 +1300,17 @@ def invite(update, context):
         f"{achv}"
     )
     btn = InlineKeyboardButton("Пригласить друга", url=link)
-    update.message.reply_text(text, reply_markup=InlineKeyboardMarkup([[btn]]))
+    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup([[btn]]))
 
 
-def topref(update, context):
+async def topref(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = get_db()
     c = conn.cursor()
     c.execute("SELECT username, referrals_count FROM users WHERE referrals_count > 0 ORDER BY referrals_count DESC LIMIT 10")
     rows = c.fetchall()
     conn.close()
     if not rows:
-        update.message.reply_text("Пока никто не приглашал друзей.")
+        await update.message.reply_text("Пока никто не приглашал друзей.")
         return
     medals = ["🥇","🥈","🥉"]
     text = "🏅 Топ-10 по приглашениям:\n\n"
@@ -1306,15 +1318,15 @@ def topref(update, context):
         medal = medals[i-1] if i <= 3 else ""
         name = f"@{username}" if username else f"ID:{i}"
         text += f"{i}. {name} — {count} приглашённых {medal}\n"
-    update.message.reply_text(text)
+    await update.message.reply_text(text)
 
-def mycards(update, context):
+async def mycards(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat_id = update.message.chat_id
     user_cards_pagination[user_id] = 0
-    send_cards_page(chat_id, user_id, context, page=0)
+    await send_cards_page(chat_id, user_id, context, page=0)
 
-def mycards_pagination_callback(update, context):
+async def mycards_pagination_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
     chat_id = query.message.chat_id
@@ -1328,26 +1340,26 @@ def mycards_pagination_callback(update, context):
     page = max(0, page)
     user_cards_pagination[user_id] = page
     try:
-        query.answer()
+        await query.answer()
     except BadRequest:
         return
-    send_cards_page(chat_id, user_id, context, page=page, edit_message=True, message_id=message_id)
+    await send_cards_page(chat_id, user_id, context, page=page, edit_message=True, message_id=message_id)
 
 @require_subscribe
-def mycards2(update, context):
+async def mycards2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     cards, all_count = get_full_cards_for_user(user_id)
     if not cards:
-        update.message.reply_text("У тебя ещё нет карточек — получи первую командой /card!")
+        await update.message.reply_text("У тебя ещё нет карточек — получи первую командой /card!")
         return
     user_carousel[user_id] = {"cards": cards, "idx": 0, "all_count": all_count}
-    send_card_page(update.message.chat_id, user_id, context)
+    await send_card_page(update.message.chat_id, user_id, context)
 
-def carousel_callback(update, context):
+async def carousel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query   = update.callback_query
     user_id = query.from_user.id
     try:
-        query.answer()
+        await query.answer()
     except BadRequest:
         return
     if user_id not in user_carousel:
@@ -1360,7 +1372,7 @@ def carousel_callback(update, context):
         user_carousel[user_id]["idx"] = (
             user_carousel[user_id]["idx"] - 1
         ) % len(user_carousel[user_id]["cards"])
-    send_card_page(
+    await send_card_page(
         chat_id=query.message.chat_id,
         user_id=user_id,
         context=context,
@@ -1368,28 +1380,28 @@ def carousel_callback(update, context):
         message_id=query.message.message_id
     )
 
-def myid(update, context):
-    update.message.reply_text(f"Твой Telegram user_id: {update.effective_user.id}")
+async def myid(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(f"Твой Telegram user_id: {update.effective_user.id}")
 
-def nocooldown(update, context):
+async def nocooldown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not is_admin(user_id):
-        update.message.reply_text("⛔️ Нет прав для этой команды.")
+        await update.message.reply_text("⛔️ Нет прав для этой команды.")
         return
     if user_id in admin_no_cooldown:
         admin_no_cooldown.remove(user_id)
-        update.message.reply_text("❄️ Ограничение по времени снова включено для вас.")
+        await update.message.reply_text("❄️ Ограничение по времени снова включено для вас.")
     else:
         admin_no_cooldown.add(user_id)
-        update.message.reply_text("🔥 Ограничение по времени для вас отключено!")
+        await update.message.reply_text("🔥 Ограничение по времени для вас отключено!")
 
-def deletecard(update, context):
+async def deletecard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not is_admin(user_id):
-        update.message.reply_text("⛔️ Нет прав для этой команды.")
+        await update.message.reply_text("⛔️ Нет прав для этой команды.")
         return
     if not context.args:
-        update.message.reply_text("⚠️ Укажите имя игрока после команды (например: /deletecard Коннор МакДэвид)")
+        await update.message.reply_text("⚠️ Укажите имя игрока после команды (например: /deletecard Коннор МакДэвид)")
         return
     name = " ".join(context.args)
     conn = get_db()
@@ -1397,26 +1409,26 @@ def deletecard(update, context):
     c.execute('SELECT id FROM cards WHERE name = ?', (name,))
     row = c.fetchone()
     if not row:
-        update.message.reply_text(f"Не найдено карточки с именем: {name}")
+        await update.message.reply_text(f"Не найдено карточки с именем: {name}")
     else:
         c.execute('DELETE FROM cards WHERE id = ?', (row[0],))
         conn.commit()
-        update.message.reply_text(f"Карточка игрока '{name}' удалена.")
+        await update.message.reply_text(f"Карточка игрока '{name}' удалена.")
         refresh_card_cache(row[0])
     conn.close()
 
     admin_edit_state = {}  # user_id: {step, card_id}
 EDIT_CARDS_PER_PAGE = 20
 
-def editcard(update, context):
+async def editcard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not is_admin(user_id):
-        update.message.reply_text("⛔️ Нет прав для этой команды.")
+        await update.message.reply_text("⛔️ Нет прав для этой команды.")
         return
     admin_edit_state[user_id] = {"step": "list"}
-    send_editcard_list(update.message.chat_id, context, 0, user_id)
+    await send_editcard_list(update.message.chat_id, context, 0, user_id)
 
-def send_editcard_list(chat_id, context, page, user_id, edit_message_id=None):
+async def send_editcard_list(chat_id, context, page, user_id, edit_message_id=None):
     conn = get_db()
     c = conn.cursor()
     c.execute("SELECT id, name, rarity FROM cards ORDER BY rarity, name")
@@ -1440,7 +1452,7 @@ def send_editcard_list(chat_id, context, page, user_id, edit_message_id=None):
     msg = f"Выберите карточку для редактирования (стр {page+1} из {total_pages}):"
     if edit_message_id:
         try:
-            context.bot.edit_message_text(
+            await context.bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=edit_message_id,
                 text=msg,
@@ -1452,9 +1464,9 @@ def send_editcard_list(chat_id, context, page, user_id, edit_message_id=None):
             else:
                 raise
     else:
-        context.bot.send_message(chat_id, msg, reply_markup=markup)
+        await context.bot.send_message(chat_id, msg, reply_markup=markup)
 
-def editcard_callback(update, context):
+async def editcard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
     data = query.data
@@ -1462,8 +1474,8 @@ def editcard_callback(update, context):
     # Навигация по страницам
     if data.startswith("admineditpage_"):
         page = int(data.split("_")[1])
-        send_editcard_list(query.message.chat_id, context, page, user_id, query.message.message_id)
-        query.answer()
+        await send_editcard_list(query.message.chat_id, context, page, user_id, query.message.message_id)
+        await query.answer()
         return
 
     # Выбор карточки
@@ -1479,15 +1491,15 @@ def editcard_callback(update, context):
         card = get_card_from_cache(card_id)
         name = card["name"] if card else "карточка"
         text = f"Выбрана: <b>{name}</b>\nЧто редактировать?"
-        query.edit_message_text(text, reply_markup=markup, parse_mode='HTML')
-        query.answer()
+        await query.edit_message_text(text, reply_markup=markup, parse_mode='HTML')
+        await query.answer()
         return
 
     # Выбор действия (очки или редкость)
     if data == "admineditstat":
         admin_edit_state[user_id]["step"] = "edit_stats"
-        query.edit_message_text("Введите новое значение для поля <b>stats</b> (например: Очки 88 или Поб 33 КН 2.22):", parse_mode='HTML')
-        query.answer()
+        await query.edit_message_text("Введите новое значение для поля <b>stats</b> (например: Очки 88 или Поб 33 КН 2.22):", parse_mode='HTML')
+        await query.answer()
         return
     if data == "admineditrarity":
         admin_edit_state[user_id]["step"] = "edit_rarity"
@@ -1497,8 +1509,8 @@ def editcard_callback(update, context):
             for r in RARITY_ORDER.keys()
         ]
         markup = InlineKeyboardMarkup(buttons)
-        query.edit_message_text("Выберите новую редкость:", reply_markup=markup)
-        query.answer()
+        await query.edit_message_text("Выберите новую редкость:", reply_markup=markup)
+        await query.answer()
         return
 
     # Выбор редкости из списка
@@ -1506,7 +1518,7 @@ def editcard_callback(update, context):
         rarity = data.split("_")[1]
         card_id = admin_edit_state[user_id].get("card_id")
         if not card_id:
-            query.answer("Ошибка! Карточка не выбрана.")
+            await query.answer("Ошибка! Карточка не выбрана.")
             return
         conn = get_db()
         c = conn.cursor()
@@ -1517,12 +1529,12 @@ def editcard_callback(update, context):
         name = row[0] if row else "карточка"
         conn.close()
         refresh_card_cache(card_id)
-        query.edit_message_text(f"✅ Редкость карточки <b>{name}</b> обновлена на: {RARITY_RU[rarity]}", parse_mode='HTML')
+        await query.edit_message_text(f"✅ Редкость карточки <b>{name}</b> обновлена на: {RARITY_RU[rarity]}", parse_mode='HTML')
         admin_edit_state.pop(user_id, None)
-        query.answer()
+        await query.answer()
         return
 
-def admin_text_handler(update, context):
+async def admin_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in admin_edit_state:
         return
@@ -1539,44 +1551,42 @@ def admin_text_handler(update, context):
         name = row[0] if row else "карточка"
         conn.close()
         refresh_card_cache(card_id)
-        update.message.reply_text(f"✅ Поле <b>stats</b> карточки <b>{name}</b> обновлено на: <code>{new_stats}</code>", parse_mode='HTML')
+        await update.message.reply_text(f"✅ Поле <b>stats</b> карточки <b>{name}</b> обновлено на: <code>{new_stats}</code>", parse_mode='HTML')
         admin_edit_state.pop(user_id, None)
 
 def main():
     setup_db()
-    updater = Updater(TOKEN, use_context=True)
-    dp = updater.dispatcher
+    application = Application.builder().token(TOKEN).build()
 
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("card", card))
-    dp.add_handler(CommandHandler("mycards", mycards))
-    dp.add_handler(CommandHandler("mycards2", mycards2))
-    dp.add_handler(CommandHandler("myid", myid))
-    dp.add_handler(CommandHandler("nocooldown", nocooldown))
-    dp.add_handler(CommandHandler("deletecard", deletecard))
-    dp.add_handler(CommandHandler("me", me))
-    dp.add_handler(CommandHandler("top", top))
-    dp.add_handler(CommandHandler("top50", top50))
-    dp.add_handler(CommandHandler("resetweek", resetweek))
-    dp.add_handler(CommandHandler("trade", trade))
-    dp.add_handler(CallbackQueryHandler(trade_callback, pattern="^trade_"))
-    dp.add_handler(CallbackQueryHandler(mycards_pagination_callback, pattern="^mycards_(next|prev)$"))
-    dp.add_handler(CallbackQueryHandler(carousel_callback, pattern="^(next|prev)$"))
-    dp.add_handler(CallbackQueryHandler(trade_page_callback, pattern="^trade_page_(prev|next)$"))
-    dp.add_handler(CommandHandler("editcard", editcard))
-    dp.add_handler(CallbackQueryHandler(editcard_callback, pattern="^(adminedit|admineditpage|admineditstat|admineditrarity|adminsetrarity)_?"))
-    dp.add_handler(MessageHandler(~Filters.command, admin_text_handler))
-    dp.add_handler(CallbackQueryHandler(check_subscribe_callback, pattern="^check_subscribe$"))
-    dp.add_handler(CommandHandler("invite", invite))
-    dp.add_handler(CommandHandler("topref", topref))
-
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("card", card))
+    application.add_handler(CommandHandler("mycards", mycards))
+    application.add_handler(CommandHandler("mycards2", mycards2))
+    application.add_handler(CommandHandler("myid", myid))
+    application.add_handler(CommandHandler("nocooldown", nocooldown))
+    application.add_handler(CommandHandler("deletecard", deletecard))
+    application.add_handler(CommandHandler("me", me))
+    application.add_handler(CommandHandler("top", top))
+    application.add_handler(CommandHandler("top50", top50))
+    application.add_handler(CommandHandler("resetweek", resetweek))
+    application.add_handler(CommandHandler("trade", trade))
+    application.add_handler(CallbackQueryHandler(trade_callback, pattern="^trade_"))
+    application.add_handler(CallbackQueryHandler(mycards_pagination_callback, pattern="^mycards_(next|prev)$"))
+    application.add_handler(CallbackQueryHandler(carousel_callback, pattern="^(next|prev)$"))
+    application.add_handler(CallbackQueryHandler(trade_page_callback, pattern="^trade_page_(prev|next)$"))
+    application.add_handler(CommandHandler("editcard", editcard))
+    application.add_handler(CallbackQueryHandler(editcard_callback, pattern="^(adminedit|admineditpage|admineditstat|admineditrarity|adminsetrarity)_?"))
+    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), admin_text_handler))
+    application.add_handler(CallbackQueryHandler(check_subscribe_callback, pattern="^check_subscribe$"))
+    application.add_handler(CommandHandler("invite", invite))
+    application.add_handler(CommandHandler("topref", topref))
 
 
 
 
 
-    updater.start_polling()
-    updater.idle()
+
+    application.run_polling()
 
 if __name__ == '__main__':
     main()
