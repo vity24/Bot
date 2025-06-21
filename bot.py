@@ -3,6 +3,7 @@ import time
 import random
 import sqlite3
 import re
+import asyncio
 async def is_user_subscribed(bot, user_id):
     try:
         for ch in CHANNELS:
@@ -69,6 +70,21 @@ CARD_COOLDOWN = 3 * 60 * 60  # 3 часа
 CHANNELS = [
     {"username": "@HOCKEY_CARDS_NHL", "name": "Подпишись на канал", "link": "https://t.me/HOCKEY_CARDS_NHL"},
     {"username": "@Hockey_cards_nhl_chat", "name": "Подпишись на чат", "link": "https://t.me/Hockey_cards_nhl_chat"}
+]
+
+# Список команд для меню Telegram
+BOT_COMMANDS = [
+    BotCommand("start", "Приветствие и справка"),
+    BotCommand("card", "Получить новую карточку"),
+    BotCommand("mycards", "Коллекция (листай кнопками)"),
+    BotCommand("mycards2", "Коллекция по одной карточке"),
+    BotCommand("myid", "Узнать свой user_id"),
+    BotCommand("me", "Твой рейтинг и прогресс"),
+    BotCommand("trade", "Обмен картами по ID"),
+    BotCommand("top", "ТОП-10 игроков"),
+    BotCommand("top50", "ТОП-50 игроков"),
+    BotCommand("invite", "Пригласи друга и получи ачивки!"),
+    BotCommand("topref", "ТОП по приглашениям"),
 ]
 
 
@@ -231,60 +247,7 @@ def setup_db():
     # ... остальной код создания таблиц ...
     conn.commit()
     conn.close()
-    load_card_cache(force=True)
 
-def main():
-    setup_db()
-    application = Application.builder().token(TOKEN).build()
-
-    # 👇 Здесь формируем список команд для меню Telegram
-    bot_commands = [
-        BotCommand("start", "Приветствие и справка"),
-        BotCommand("card", "Получить новую карточку"),
-        BotCommand("mycards", "Коллекция (листай кнопками)"),
-        BotCommand("mycards2", "Коллекция по одной карточке"),
-        BotCommand("myid", "Узнать свой user_id"),
-        BotCommand("me", "Твой рейтинг и прогресс"),
-        BotCommand("trade", "Обмен картами по ID"),
-        BotCommand("top", "ТОП-10 игроков"),
-        BotCommand("top50", "ТОП-50 игроков"),
-        BotCommand("invite", "Пригласи друга и получи ачивки!"),
-        BotCommand("topref", "ТОП по приглашениям"),
-    ]
-    # 👇 Устанавливаем команды в меню Telegram
-    updater.bot.set_my_commands(bot_commands)
-    conn = get_db()
-    c = conn.cursor()
-    c.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT, last_card_time INTEGER)')
-    try:
-        c.execute("ALTER TABLE users ADD COLUMN last_week_score INTEGER DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
-    c.execute('CREATE TABLE IF NOT EXISTS inventory (user_id INTEGER, card_id INTEGER, time_got INTEGER)')
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS cards (
-            id INTEGER PRIMARY KEY,
-            name TEXT,
-            img TEXT,
-            pos TEXT,
-            country TEXT,
-            born TEXT,
-            height TEXT,
-            weight TEXT,
-            rarity TEXT,
-            stats TEXT
-        )
-    ''')
-    try:
-        c.execute("ALTER TABLE cards ADD COLUMN team_en TEXT")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        c.execute("ALTER TABLE cards ADD COLUMN team_ru TEXT")
-    except sqlite3.OperationalError:
-        pass
-    conn.commit()
-    conn.close()
 
 def wrap_line(text, length=35):
     words = text.split()
@@ -1554,9 +1517,18 @@ async def admin_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(f"✅ Поле <b>stats</b> карточки <b>{name}</b> обновлено на: <code>{new_stats}</code>", parse_mode='HTML')
         admin_edit_state.pop(user_id, None)
 
+async def set_bot_commands(app: Application):
+    """Install bot command menu on startup."""
+    await app.bot.set_my_commands(BOT_COMMANDS)
+
 def main():
     setup_db()
-    application = Application.builder().token(TOKEN).build()
+    application = (
+        Application.builder()
+        .token(TOKEN)
+        .post_init(set_bot_commands)
+        .build()
+    )
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("card", card))
