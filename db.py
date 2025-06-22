@@ -7,6 +7,22 @@ DB_PATH = os.path.join(os.path.dirname(__file__), 'botdb.sqlite')
 def get_db():
     return sqlite3.connect(DB_PATH)
 
+def _ensure_user_columns(conn):
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(users)")
+    cols = {row[1] for row in cur.fetchall()}
+    if 'xp' not in cols:
+        cur.execute("ALTER TABLE users ADD COLUMN xp INTEGER DEFAULT 0")
+    if 'level' not in cols:
+        cur.execute("ALTER TABLE users ADD COLUMN level INTEGER DEFAULT 1")
+    if 'xp_daily' not in cols:
+        cur.execute("ALTER TABLE users ADD COLUMN xp_daily INTEGER DEFAULT 0")
+    if 'last_xp_reset' not in cols:
+        cur.execute("ALTER TABLE users ADD COLUMN last_xp_reset DATE DEFAULT CURRENT_DATE")
+    if 'win_streak' not in cols:
+        cur.execute("ALTER TABLE users ADD COLUMN win_streak INTEGER DEFAULT 0")
+    conn.commit()
+
 def setup_battle_db():
     conn = get_db()
     conn.execute(
@@ -156,7 +172,11 @@ def get_team(user_id):
 def get_xp_level(uid: int):
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT xp, level FROM users WHERE id=?", (uid,))
+    try:
+        cur.execute("SELECT xp, level FROM users WHERE id=?", (uid,))
+    except sqlite3.OperationalError:
+        _ensure_user_columns(conn)
+        cur.execute("SELECT xp, level FROM users WHERE id=?", (uid,))
     row = cur.fetchone()
     conn.close()
     if row:
@@ -166,10 +186,17 @@ def get_xp_level(uid: int):
 
 def update_xp(uid: int, xp: int, level: int, delta: int):
     conn = get_db()
-    conn.execute(
-        "UPDATE users SET xp=?, level=?, xp_daily = xp_daily + ?, last_xp_reset=last_xp_reset WHERE id=?",
-        (xp, level, delta, uid),
-    )
+    try:
+        conn.execute(
+            "UPDATE users SET xp=?, level=?, xp_daily = xp_daily + ?, last_xp_reset=last_xp_reset WHERE id=?",
+            (xp, level, delta, uid),
+        )
+    except sqlite3.OperationalError:
+        _ensure_user_columns(conn)
+        conn.execute(
+            "UPDATE users SET xp=?, level=?, xp_daily = xp_daily + ?, last_xp_reset=last_xp_reset WHERE id=?",
+            (xp, level, delta, uid),
+        )
     conn.commit()
     conn.close()
 
