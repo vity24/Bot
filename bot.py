@@ -1770,6 +1770,7 @@ def main():
     application.add_handler(CallbackQueryHandler(trade_page_callback, pattern="^trade_page_(prev|next)$"))
     application.add_handler(CommandHandler("editcard", editcard))
     application.add_handler(CallbackQueryHandler(editcard_callback, pattern="^(adminedit|admineditpage|admineditstat|admineditrarity|adminsetrarity)_?"))
+    application.add_handler(CommandHandler("myteam", handlers.show_my_team))
     application.add_handler(
         MessageHandler(filters.TEXT & (~filters.COMMAND), admin_text_handler),
         group=5,

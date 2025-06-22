@@ -40,9 +40,43 @@ TACTICS = {
 TEAM_PAGE = 10
 
 
+def get_card_name(card_id: int) -> str:
+    conn = db.get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT name FROM cards WHERE id=?", (card_id,))
+    row = cur.fetchone()
+    conn.close()
+    return row[0] if row else "?"
+
+
+async def show_my_team(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    team = db.get_team(user_id)
+    if not team:
+        await update.message.reply_text("Команда не создана. Используй /team")
+        return
+    lineup_names = [get_card_name(cid) for cid in team.get("lineup", [])]
+    bench_names = [get_card_name(cid) for cid in team.get("bench", [])]
+    text = (
+        f"{team['name']}\n"
+        f"🏒 {', '.join(lineup_names) if lineup_names else '—'}\n"
+        f"🪑 {', '.join(bench_names) if bench_names else '—'}"
+    )
+    buttons = [
+        InlineKeyboardButton("✏️ Изменить", callback_data="team_edit"),
+        InlineKeyboardButton("📝 Переименовать", callback_data="team_rename"),
+    ]
+    markup = InlineKeyboardMarkup([buttons])
+    await update.message.reply_text(text, reply_markup=markup)
+
+
 async def create_team(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if db.get_team(user_id):
+        await show_my_team(update, context)
+        return
     context.user_data["team_build"] = {"step": "name"}
-    await update.message.reply_text("Введите название команды:")
+    await update.message.reply_text("Введите название команды (3-8 символов):")
 
 
 async def team_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -50,14 +84,27 @@ async def team_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not tb:
         return
     if tb.get("step") == "name":
-        tb["name"] = update.message.text.strip()[:30]
+        name = update.message.text.strip()[:30]
+        if not (3 <= len(name) <= 8):
+            await update.message.reply_text("Название должно быть от 3 до 8 символов, попробуйте снова:")
+            return
+        tb["name"] = name
         tb["step"] = "select"
         tb["selected"] = []
         tb["page"] = 0
-        # explicitly store the updated state back just in case the dict
-        # reference is not preserved by the persistence implementation
         context.user_data["team_build"] = tb
         await send_team_page(update.message.chat_id, update.effective_user.id, context)
+    elif tb.get("step") == "rename":
+        name = update.message.text.strip()[:30]
+        if not (3 <= len(name) <= 8):
+            await update.message.reply_text("Название должно быть от 3 до 8 символов, попробуйте снова:")
+            return
+        team = db.get_team(update.effective_user.id)
+        if team:
+            db.save_team(update.effective_user.id, name, team.get("lineup", []), team.get("bench", []))
+        context.user_data.pop("team_build", None)
+        await update.message.reply_text(f"Команда переименована в '{name}'")
+        await show_my_team(update, context)
 
 
 async def send_team_page(chat_id, user_id, context, edit=False, message_id=None):
@@ -101,9 +148,24 @@ async def team_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     tb = context.user_data.get("team_build")
+    data = query.data
+    if data == "team_edit":
+        team = db.get_team(query.from_user.id)
+        if team:
+            context.user_data["team_build"] = {
+                "step": "select",
+                "name": team.get("name", "Team"),
+                "selected": team.get("lineup", []) + team.get("bench", []),
+                "page": 0,
+            }
+            await send_team_page(query.message.chat_id, query.from_user.id, context, edit=True, message_id=query.message.message_id)
+        return
+    if data == "team_rename":
+        context.user_data["team_build"] = {"step": "rename"}
+        await query.edit_message_text("Введите новое название команды (3-8 символов):")
+        return
     if not tb:
         return
-    data = query.data
     if data == "team_next":
         tb["page"] += 1
     elif data == "team_prev":
