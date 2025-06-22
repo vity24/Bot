@@ -263,7 +263,8 @@ def setup_db():
     except sqlite3.OperationalError:
         pass
     try:
-        c.execute("ALTER TABLE users ADD COLUMN last_xp_reset DATE DEFAULT CURRENT_DATE")
+        c.execute("ALTER TABLE users ADD COLUMN last_xp_reset DATE")
+        c.execute("UPDATE users SET last_xp_reset = DATE('now') WHERE last_xp_reset IS NULL")
     except sqlite3.OperationalError:
         pass
     try:
@@ -559,10 +560,10 @@ async def topxp(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def top50(update: Update, context: ContextTypes.DEFAULT_TYPE):
     top50 = await get_top_users(limit=50)
     text = "🏆 ТОП-50 коллекционеров NHL:\n\n"
-    for i, (uid, uname, score) in enumerate(top50, 1):
+    for i, (uid, uname, score, lvl) in enumerate(top50, 1):
         medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else ""
         username = (f"@{uname}" if uname else f"ID:{uid}")
-        text += f"{i}. {username} — {int(score)} {medal}\n"
+        text += f"{i}. {username} — {int(score)} | Lv {lvl} {medal}\n"
     await update.message.reply_text(text)
 
 async def resetweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
