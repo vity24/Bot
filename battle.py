@@ -115,6 +115,9 @@ class BattleSession:
             raise ValueError("Один или несколько игроков используются в обеих командах.")
         self._prepare_players(self.team1)
         self._prepare_players(self.team2)
+        self.avg_power1 = sum(p["strength"] for p in self.team1) / len(self.team1)
+        self.avg_power2 = sum(p["strength"] for p in self.team2) / len(self.team2)
+        self.str_gap = (self.avg_power2 - self.avg_power1) / max(self.avg_power1, 1)
 
     @staticmethod
     def _age(player: Dict) -> int:
@@ -156,6 +159,8 @@ class BattleSession:
         strength *= random.uniform(0.95, 1.05)  # form
         if country_count.get(player.get("country"), 0) >= 3:
             strength *= 1.05
+        lv_bonus = 1 + (player.get("owner_level", 1) // 5) * 0.02
+        strength *= lv_bonus
         return strength
 
     def _team_power(self, team: List[Dict], key: str) -> float:
