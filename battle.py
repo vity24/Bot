@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import random
 from collections import defaultdict
-from typing import List, Dict, Tuple
 
 CURRENT_YEAR = 2024
 
@@ -14,31 +13,54 @@ RARITY_MULTIPLIER = {
     "epic": 1.1,
     "legendary": 1.2,
 }
-
 TACTIC_MODIFIERS = {
     "aggressive": {"attack": 1.1, "defense": 0.9, "penalty": 1.3},
     "defensive": {"attack": 0.9, "defense": 1.1, "penalty": 1.0},
     "balanced": {"attack": 1.0, "defense": 1.0, "penalty": 1.0},
 }
-GOAL_MESSAGES = [
-    "Гол: {name} ({team}) поражает ворота!",
-    "Шайба в сетке! {name} приносит очко команде {team}!",
-    "{name} ({team}) забивает блестящий гол!"
+
+# --- визуальные элементы для логов ---
+RARITY_EMOJI = {
+    "legendary": "⭐️",
+    "mythic": "🟥",
+    "epic": "💎",
+    "rare": "🔵",
+    "common": "🟢",
+}
+
+POSITION_EMOJI = {
+    "G": "🧤",
+    "F": "🏒",
+    "D": "🛡️",
+}
+
+TEAM_EMOJI = {"team1": "🟦", "team2": "🟥"}
+
+GOAL_ACTIONS = [
+    "забивает!",
+    "шайба в сетке!",
+    "поражает ворота!",
 ]
-SAVE_MESSAGES = [
-    "Сейв: {name} ({team}) отражает бросок!",
-    "{name} ({team}) спасает свою команду!",
-    "Вратарь {name} ({team}) делает шикарный сейв!"
+
+SAVE_ACTIONS = [
+    "отражает бросок!",
+    "спасает свою команду!",
+    "делает шикарный сейв!",
 ]
-PENALTY_MESSAGES = [
-    "Удаление: {name} ({team}) отправляется на штрафной бокс.",
-    "Судья фиксирует удаление игрока {name} ({team}).",
-    "{name} ({team}) нарушает правила и удаляется."
+
+MISS_ACTIONS = [
+    "❌ промахивается...",
+    "не попадает по воротам...",
 ]
-INJURY_MESSAGES = [
-    "Травма: {name} покидает матч.",
-    "{name} получает травму и уходит со льда.",
-    "Ай! {name} не может продолжить игру."
+
+PENALTY_ACTIONS = [
+    "отправляется на штрафной бокс.",
+    "нарушает правила и удаляется.",
+]
+
+INJURY_ACTIONS = [
+    "получает травму и покидает матч.",
+    "не может продолжить игру.",
 ]
 
 
@@ -112,6 +134,32 @@ class BattleSession:
         goalies = [p for p in team if p.get("pos") == "G" and not p["injured"]]
         return goalies[0] if goalies else random.choice(team)
 
+    def _pos_icon(self, player: Dict) -> str:
+        pos = (player.get("pos") or "").upper()
+        if pos.startswith("G"):
+            return POSITION_EMOJI["G"]
+        if pos.startswith("D"):
+            return POSITION_EMOJI["D"]
+        return POSITION_EMOJI["F"]
+
+    def _format_player(self, player: Dict) -> str:
+        rarity = RARITY_EMOJI.get(player.get("rarity", "common"), "")
+        return f"{self._pos_icon(player)} {rarity} <b>{player['name']}</b>"
+
+    def _team_prefix(self, idx: int) -> str:
+        name = self.name1 if idx == 1 else self.name2
+        emoji = TEAM_EMOJI["team1"] if idx == 1 else TEAM_EMOJI["team2"]
+        return f"{emoji} {name}"
+
+    def _log_action(self, idx: int, player: Dict, action: str) -> None:
+        special = player.get("strength", 0) > 90
+        prefix = self._team_prefix(idx)
+        info = self._format_player(player)
+        if special:
+            self.log.append(f"{prefix} | 💥 ЗВЁЗДА МАТЧА! {info} {action}")
+        else:
+            self.log.append(f"{prefix} | {info} {action}")
+
     def _attempt_goal(self, attacker: Dict, goalie: Dict, attack_mod: float, defense_mod: float) -> bool:
         atk = attacker["strength"] * attack_mod
         df = goalie["strength"] * defense_mod
@@ -138,18 +186,18 @@ class BattleSession:
                 if success:
                     self.score["team1"] += 1
                     self.contribution[p["name"]] += 1
-                    self.log.append(f"Буллит: {p['name']} забивает")
+                    self._log_action(1, p, "буллит реализует")
                 else:
-                    self.log.append(f"Буллит: {p['name']} промахивается")
+                    self._log_action(1, p, "буллит не забивает")
             if i < len(shooters2):
                 p = shooters2[i]
                 success = random.random() < p["tech"] * 0.7
                 if success:
                     self.score["team2"] += 1
                     self.contribution[p["name"]] += 1
-                    self.log.append(f"Буллит: {p['name']} забивает")
+                    self._log_action(2, p, "буллит реализует")
                 else:
-                    self.log.append(f"Буллит: {p['name']} промахивается")
+                    self._log_action(2, p, "буллит не забивает")
 
     def simulate(self) -> Dict:
         attack_mod1 = TACTIC_MODIFIERS[self.tactic1]["attack"]
@@ -160,46 +208,46 @@ class BattleSession:
         penalty2 = TACTIC_MODIFIERS[self.tactic2]["penalty"]
 
         for period in range(1, 4):
-            self.log.append(f"--- Период {period} ---")
+            self.log.append(f"📖 --- {period} Период ---")
             for _ in range(5):
                 # team1 attack
                 attacker_team1 = random.choice(self._attackers(self.team1))
                 goalie_team2 = self._goalie(self.team2)
                 if random.random() < 0.02:
                     attacker_team1["injured"] = True
-                    self.log.append(random.choice(INJURY_MESSAGES).format(name=attacker_team1["name"]))
+                    self._log_action(1, attacker_team1, random.choice(INJURY_ACTIONS))
                 elif attacker_team1["strength"] < 25 and random.random() < 0.1 * penalty1:
-                    self.log.append(random.choice(PENALTY_MESSAGES).format(name=attacker_team1["name"], team=self.name1))
+                    self._log_action(1, attacker_team1, random.choice(PENALTY_ACTIONS))
                 else:
                     if self._attempt_goal(attacker_team1, goalie_team2, attack_mod1, defense_mod2):
                         self.score["team1"] += 1
                         self.contribution[attacker_team1["name"]] += 1
-                        self.log.append(random.choice(GOAL_MESSAGES).format(name=attacker_team1["name"], team=self.name1))
+                        self._log_action(1, attacker_team1, random.choice(GOAL_ACTIONS))
                     else:
                         self.contribution[goalie_team2["name"]] += 1
                         if random.random() < 0.3:
-                            self.log.append(f"Промах: {attacker_team1['name']} ({self.name1})")
+                            self._log_action(1, attacker_team1, random.choice(MISS_ACTIONS))
                         else:
-                            self.log.append(random.choice(SAVE_MESSAGES).format(name=goalie_team2["name"], team=self.name2))
+                            self._log_action(2, goalie_team2, random.choice(SAVE_ACTIONS))
                 # team2 attack
                 attacker_team2 = random.choice(self._attackers(self.team2))
                 goalie_team1 = self._goalie(self.team1)
                 if random.random() < 0.02:
                     attacker_team2["injured"] = True
-                    self.log.append(random.choice(INJURY_MESSAGES).format(name=attacker_team2["name"]))
+                    self._log_action(2, attacker_team2, random.choice(INJURY_ACTIONS))
                 elif attacker_team2["strength"] < 25 and random.random() < 0.1 * penalty2:
-                    self.log.append(random.choice(PENALTY_MESSAGES).format(name=attacker_team2["name"], team=self.name2))
+                    self._log_action(2, attacker_team2, random.choice(PENALTY_ACTIONS))
                 else:
                     if self._attempt_goal(attacker_team2, goalie_team1, attack_mod2, defense_mod1):
                         self.score["team2"] += 1
                         self.contribution[attacker_team2["name"]] += 1
-                        self.log.append(random.choice(GOAL_MESSAGES).format(name=attacker_team2["name"], team=self.name2))
+                        self._log_action(2, attacker_team2, random.choice(GOAL_ACTIONS))
                     else:
                         self.contribution[goalie_team1["name"]] += 1
                         if random.random() < 0.3:
-                            self.log.append(f"Промах: {attacker_team2['name']} ({self.name2})")
+                            self._log_action(2, attacker_team2, random.choice(MISS_ACTIONS))
                         else:
-                            self.log.append(random.choice(SAVE_MESSAGES).format(name=goalie_team1["name"], team=self.name1))
+                            self._log_action(1, goalie_team1, random.choice(SAVE_ACTIONS))
             self._apply_fatigue(self.team1)
             self._apply_fatigue(self.team2)
 
