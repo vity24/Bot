@@ -590,6 +590,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/invite — пригласи друга и получи ачивки!\n"
         "/topref — топ по приглашениям\n"
         "/clubs — карточки по клубам\n"
+        "/team — создание своей команды из карточек\n"
+        "/fight — бой с ботом\n"
+        "/duel — дуэль с другим игроком\n"
+        "/history — история последних 5 боёв\n"
     )
     if is_admin(user_id):
         text += (
@@ -1725,6 +1729,7 @@ async def post_init(application: Application):
         BotCommand("trade", "Обмен картами по ID"),
         BotCommand("top", "ТОП-10 игроков"),
         BotCommand("top50", "ТОП-50 игроков"),
+        BotCommand("team", "Создание команды"),
         BotCommand("fight", "Бой с ботом"),
         BotCommand("duel", "Дуэль с игроком"),
         BotCommand("history", "История боёв"),
