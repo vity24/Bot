@@ -111,14 +111,14 @@ async def team_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             tb["selected"].append(cid)
     elif data == "team_done":
-        if len(tb.get("selected", [])) < 6:
-            await query.answer("Нужно выбрать минимум 6 карт", show_alert=True)
-            return
         lineup = tb["selected"][:6]
         bench = tb["selected"][6:]
         db.save_team(query.from_user.id, tb.get("name", "Team"), lineup, bench)
         context.user_data.pop("team_build", None)
-        await query.edit_message_text(f"Команда '{tb.get('name','Team')}' сохранена.")
+        note = "Недостающие места будут заполнены случайными картами в бою." if len(lineup) < 6 else ""
+        await query.edit_message_text(
+            f"Команда '{tb.get('name','Team')}' сохранена. {note}"
+        )
         return
     await send_team_page(query.message.chat_id, query.from_user.id, context, edit=True, message_id=query.message.message_id)
 
