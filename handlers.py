@@ -1,34 +1,97 @@
 import random
 import asyncio
+import re
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 from battle import BattleSession
 import db
 
 
-async def get_random_card():
+def _parse_points(stats: str | None, pos: str | None) -> float:
+    """Extract point value from stats text."""
+    if (pos or "") == "G":
+        win = 0
+        gaa = 3.0
+        m_win = re.search(r"Поб\s+(\d+)", stats or "")
+        m_gaa = re.search(r"КН\s*([\d.]+)", stats or "")
+        if m_win:
+            win = int(m_win.group(1))
+        if m_gaa:
+            gaa = float(m_gaa.group(1))
+        return win * 2 + (30 - gaa * 10)
+    m = re.search(r"Очки\s+(\d+)", stats or "")
+    return float(m.group(1)) if m else 0.0
+
+
+def _get_random_card_sync():
     conn = db.get_db()
     cur = conn.cursor()
-    cur.execute("SELECT id, name, pos, country, born, weight, rarity, points FROM cards ORDER BY RANDOM() LIMIT 1")
+    cur.execute(
+        "SELECT id, name, pos, country, born, weight, rarity, stats, team_en, team_ru FROM cards ORDER BY RANDOM() LIMIT 1"
+    )
     row = cur.fetchone()
     conn.close()
     if row:
-        return dict(zip(["id","name","pos","country","born","weight","rarity","points"], row))
+        fields = [
+            "id",
+            "name",
+            "pos",
+            "country",
+            "born",
+            "weight",
+            "rarity",
+            "stats",
+            "team_en",
+            "team_ru",
+        ]
+        card = dict(zip(fields, row))
+        card["points"] = _parse_points(card["stats"], card["pos"])
+        return card
     return None
 
-def get_user_cards(user_id):
+
+async def get_random_card():
+    return await asyncio.to_thread(_get_random_card_sync)
+
+
+def _get_user_cards_sync(user_id):
     conn = db.get_db()
     cur = conn.cursor()
-    cur.execute("SELECT card_id FROM inventory WHERE user_id=?", (user_id,))
-    ids = [r[0] for r in cur.fetchall()]
-    cards = []
-    for cid in ids:
-        cur.execute("SELECT id, name, pos, country, born, weight, rarity, points FROM cards WHERE id=?", (cid,))
-        row = cur.fetchone()
-        if row:
-            cards.append(dict(zip(["id","name","pos","country","born","weight","rarity","points"], row)))
+    cur.execute(
+        """
+        SELECT cards.id, cards.name, cards.pos, cards.country, cards.born, cards.weight,
+               cards.rarity, cards.stats, cards.team_en, cards.team_ru
+          FROM inventory
+          JOIN cards ON inventory.card_id = cards.id
+         WHERE inventory.user_id = ?
+        """,
+        (user_id,),
+    )
+    rows = cur.fetchall()
     conn.close()
+
+    cards = []
+    for row in rows:
+        fields = [
+            "id",
+            "name",
+            "pos",
+            "country",
+            "born",
+            "weight",
+            "rarity",
+            "stats",
+            "team_en",
+            "team_ru",
+        ]
+        card = dict(zip(fields, row))
+        card["points"] = _parse_points(card["stats"], card["pos"])
+        cards.append(card)
     return cards
+
+
+async def get_user_cards(user_id):
+    return await asyncio.to_thread(_get_user_cards_sync, user_id)
 PVP_QUEUE = {}
 
 TACTICS = {
@@ -120,7 +183,7 @@ async def send_team_page(chat_id, user_id, context, edit=False, message_id=None)
     tb = context.user_data.get("team_build", {})
     page = tb.get("page", 0)
     selected = tb.get("selected", [])
-    cards = {c["id"]: c for c in get_user_cards(user_id)}
+    cards = {c["id"]: c for c in await get_user_cards(user_id)}
     if not cards:
         await context.bot.send_message(
             chat_id=chat_id,
@@ -221,7 +284,7 @@ async def start_duel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Выбери тактику для дуэли:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def _build_team(user_id, ids=None):
-    cards = get_user_cards(user_id)
+    cards = await get_user_cards(user_id)
     team = []
     if ids:
         id_set = list(ids)
