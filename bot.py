@@ -1120,14 +1120,45 @@ def get_all_club_keys():
     c = conn.cursor()
     c.execute(
         """
-        SELECT DISTINCT COALESCE(team_en, team_ru) AS club
+        SELECT DISTINCT COALESCE(team_en, team_ru)
           FROM cards
-         WHERE club IS NOT NULL AND club != ''
+         WHERE (team_en IS NOT NULL AND team_en != '')
+            OR (team_ru IS NOT NULL AND team_ru != '')
         """
     )
     clubs = sorted(r[0] for r in c.fetchall())
     conn.close()
     return clubs
+
+def get_all_club_info():
+    """Return mapping of club_key -> English name."""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute(
+        """
+        SELECT DISTINCT COALESCE(team_en, team_ru) AS club_key,
+                        team_en,
+                        team_ru
+          FROM cards
+         WHERE (team_en IS NOT NULL AND team_en != '')
+            OR (team_ru IS NOT NULL AND team_ru != '')
+        """
+    )
+    data = {}
+    for club_key, en, ru in c.fetchall():
+        data[club_key] = en or club_key
+    conn.close()
+    return data
+
+def club_abbr(name: str) -> str:
+    """Return a simple abbreviation for a club name."""
+    if not name:
+        return ""
+    words = re.findall(r"[A-Za-z]+", name)
+    if not words:
+        return ""
+    letters = "".join(w[0] for w in words).upper()
+    return letters[:3]
 
 
 def get_club_total_counts():
@@ -1135,11 +1166,12 @@ def get_club_total_counts():
     c = conn.cursor()
     c.execute(
         """
-        SELECT COALESCE(team_en, team_ru) AS club,
+        SELECT COALESCE(team_en, team_ru) AS club_key,
                COUNT(DISTINCT id)
           FROM cards
-         WHERE club IS NOT NULL AND club != ''
-      GROUP BY club
+         WHERE (team_en IS NOT NULL AND team_en != '')
+            OR (team_ru IS NOT NULL AND team_ru != '')
+      GROUP BY club_key
         """
     )
     data = {row[0]: row[1] for row in c.fetchall()}
@@ -1152,13 +1184,14 @@ def get_user_club_counts(user_id):
     c = conn.cursor()
     c.execute(
         """
-        SELECT COALESCE(cards.team_en, cards.team_ru) AS club,
+        SELECT COALESCE(cards.team_en, cards.team_ru) AS club_key,
                COUNT(DISTINCT cards.id)
           FROM inventory
           JOIN cards ON inventory.card_id = cards.id
          WHERE inventory.user_id = ?
-           AND club IS NOT NULL AND club != ''
-      GROUP BY club
+           AND ((cards.team_en IS NOT NULL AND cards.team_en != '')
+                OR (cards.team_ru IS NOT NULL AND cards.team_ru != ''))
+      GROUP BY club_key
         """,
         (user_id,)
     )
@@ -1192,7 +1225,8 @@ def get_user_club_cards(user_id, club_key):
         card_copy = card.copy()
         card_copy["count"] = cnt
         cards.append(card_copy)
-    return cards, len(set(ids))
+    total = sum(count_dict.values())
+    return cards, total
 
 async def send_cards_page(chat_id, user_id, context, page=0, edit_message=False, message_id=None):
     # Получаем все карточки пользователя
@@ -1398,15 +1432,16 @@ async def topref(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @require_subscribe
 async def clubs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    all_keys = get_all_club_keys()
+    info = get_all_club_info()
     totals = get_club_total_counts()
     user_cnt = get_user_club_counts(uid)
 
     buttons, row = [], []
-    for key in all_keys:
+    for key, en_name in sorted(info.items()):
         have = user_cnt.get(key, 0)
         total = totals.get(key, 0)
-        label = f"{key} {have}/{total}"
+        abbr = club_abbr(en_name)
+        label = f"{abbr} - {en_name} {have}/{total}"
         row.append(InlineKeyboardButton(label, callback_data=f"club_sel_{key}"))
         if len(row) == 2:
             buttons.append(row)
@@ -1488,18 +1523,18 @@ async def club_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
     except BadRequest:
         pass
-    cards, unique = get_user_club_cards(user_id, club_key)
+    cards, total = get_user_club_cards(user_id, club_key)
     if not cards:
         await query.edit_message_text("У тебя нет карточек этого клуба.")
         return
-    lines = []
-    for card in cards:
-        line = f"{card['name']} ({RARITY_RU.get(card['rarity'], card['rarity'])})"
-        if card['count'] > 1:
-            line += f" x{card['count']}"
-        lines.append(line)
-    text = f"Карточки {club_key} ({unique} уник.):\n" + "\n".join(lines)
-    await query.edit_message_text(text)
+    user_carousel[user_id] = {"cards": cards, "idx": 0, "all_count": total}
+    await send_card_page(
+        chat_id=query.message.chat_id,
+        user_id=user_id,
+        context=context,
+        edit_message=True,
+        message_id=query.message.message_id,
+    )
 
 async def myid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Твой Telegram user_id: {update.effective_user.id}")
