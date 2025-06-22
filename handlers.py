@@ -65,6 +65,13 @@ async def send_team_page(chat_id, user_id, context, edit=False, message_id=None)
     page = tb.get("page", 0)
     selected = tb.get("selected", [])
     cards = {c["id"]: c for c in get_user_cards(user_id)}
+    if not cards:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="У вас пока нет карт, получите их командой /pack",
+        )
+        context.user_data.pop("team_build", None)
+        return
     ids = list(cards.keys())
     total_pages = (len(ids) + TEAM_PAGE - 1) // TEAM_PAGE
     page_cards = ids[page * TEAM_PAGE:(page + 1) * TEAM_PAGE]
