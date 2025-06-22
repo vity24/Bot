@@ -4,14 +4,29 @@ import random
 import sqlite3
 import re
 import asyncio
+import telegram
+
+sub_cache: dict[int, tuple[bool, float]] = {}
+SUB_TTL = 30  # секунд
+
 async def is_user_subscribed(bot, user_id):
+    cached = sub_cache.get(user_id, (None, 0))
+    ok, ts = cached
+    if ok is not None and time.time() - ts < SUB_TTL:
+        return ok
     try:
         for ch in CHANNELS:
             member = await bot.get_chat_member(ch["username"], user_id)
             if member.status not in ("member", "administrator", "creator"):
+                sub_cache[user_id] = (False, time.time())
                 return False
+        sub_cache[user_id] = (True, time.time())
         return True
+    except telegram.error.RetryAfter as e:
+        await asyncio.sleep(e.retry_after)
+        return await is_user_subscribed(bot, user_id)
     except Exception:
+        sub_cache[user_id] = (False, time.time())
         return False
 from telegram.ext import (
     Application,
