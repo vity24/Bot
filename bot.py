@@ -1770,7 +1770,10 @@ def main():
     application.add_handler(CallbackQueryHandler(trade_page_callback, pattern="^trade_page_(prev|next)$"))
     application.add_handler(CommandHandler("editcard", editcard))
     application.add_handler(CallbackQueryHandler(editcard_callback, pattern="^(adminedit|admineditpage|admineditstat|admineditrarity|adminsetrarity)_?"))
-    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), admin_text_handler))
+    application.add_handler(
+        MessageHandler(filters.TEXT & (~filters.COMMAND), admin_text_handler),
+        group=5,
+    )
     application.add_handler(CallbackQueryHandler(check_subscribe_callback, pattern="^check_subscribe$"))
     application.add_handler(CommandHandler("invite", invite))
     application.add_handler(CommandHandler("topref", topref))
