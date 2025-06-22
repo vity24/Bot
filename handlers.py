@@ -6,6 +6,27 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 from battle import BattleSession
 import db
+from helpers.leveling import level_from_xp, xp_to_next, calc_battle_xp
+
+level_up_msg = "\ud83c\udd99 *Новый уровень!*  Ты достиг Lv {lvl}.\n\ud83c\udf81 Твой приз: {reward}"
+
+
+async def grant_level_reward(uid: int, lvl: int, context: ContextTypes.DEFAULT_TYPE):
+    reward = "пак карт"
+    await context.bot.send_message(uid, level_up_msg.format(lvl=lvl, reward=reward), parse_mode="Markdown")
+
+
+async def apply_xp(uid: int, result: dict, opponent_is_bot: bool, context: ContextTypes.DEFAULT_TYPE):
+    streak = db.update_win_streak(uid, result.get("winner") == "team1")
+    xp_gain = calc_battle_xp(result, is_pve=opponent_is_bot, streak=streak, strength_gap=result.get("str_gap", 0.0))
+    old_xp, old_lvl = db.get_xp_level(uid)
+    new_xp = old_xp + xp_gain
+    new_lvl = level_from_xp(new_xp)
+    db.update_xp(uid, new_xp, new_lvl, xp_gain)
+    if new_lvl > old_lvl:
+        await grant_level_reward(uid, new_lvl, context)
+    if xp_gain:
+        await context.bot.send_message(uid, f"➕ +{xp_gain} XP", parse_mode="Markdown")
 
 
 def _parse_points(stats: str | None, pos: str | None) -> float:
@@ -298,6 +319,7 @@ async def duel_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def _build_team(user_id, ids=None):
     cards = await get_user_cards(user_id)
+    level = db.get_xp_level(user_id)[1] if user_id else 1
     team = []
     if ids:
         id_set = list(ids)
@@ -313,6 +335,7 @@ async def _build_team(user_id, ids=None):
                     "weight": str(card.get("weight", "")),
                     "rarity": card.get("rarity", "common"),
                     "points": float(card.get("points", 50)),
+                    "owner_level": level,
                 })
         cards = [c for c in cards if c["id"] not in id_set]
     random.shuffle(cards)
@@ -326,6 +349,7 @@ async def _build_team(user_id, ids=None):
             "weight": str(card.get("weight", "")),
             "rarity": card.get("rarity", "common"),
             "points": float(card.get("points", 50)),
+            "owner_level": level,
         })
     # если нет карт, добавляем случайные
     while len(team) < 6:
@@ -339,6 +363,7 @@ async def _build_team(user_id, ids=None):
             "weight": str(card.get("weight", "")),
             "rarity": card.get("rarity", "common"),
             "points": float(card.get("points", 50)),
+            "owner_level": level,
         })
     return team
 
@@ -401,6 +426,14 @@ async def tactic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             PVP_QUEUE.pop(opp_id, None)
             PVP_QUEUE.pop(user_id, None)
             result = await _run_battle(user_id, str(opp_id), team, opp_data["team"], tactic, opp_data["tactic"], team_name, opp_data["name"])
+            await apply_xp(user_id, result, False, context)
+            opp_result = result.copy()
+            if result.get("winner") == "team1":
+                opp_result["winner"] = "team2"
+            elif result.get("winner") == "team2":
+                opp_result["winner"] = "team1"
+            opp_result["str_gap"] = -result.get("str_gap", 0.0)
+            await apply_xp(opp_id, opp_result, False, context)
             await _start_log_view(update.effective_user.id, result, context)
             await _start_log_view(opp_id, result, context)
         else:
@@ -415,6 +448,7 @@ async def tactic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         team2 = await _build_team(0)
         tactic2 = random.choice(list(TACTICS.values()))
         result = await _run_battle(user_id, "Bot", team1, team2, tactic, tactic2, team_name, "Bot")
+        await apply_xp(user_id, result, True, context)
         await _start_log_view(update.effective_user.id, result, context)
 
 async def show_log_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -460,6 +494,14 @@ async def duel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             my_data["name"],
             opp_data["name"],
         )
+        await apply_xp(user_id, result, False, context)
+        opp_result = result.copy()
+        if result.get("winner") == "team1":
+            opp_result["winner"] = "team2"
+        elif result.get("winner") == "team2":
+            opp_result["winner"] = "team1"
+        opp_result["str_gap"] = -result.get("str_gap", 0.0)
+        await apply_xp(opp_id, opp_result, False, context)
         await _start_log_view(user_id, result, context)
         await _start_log_view(opp_id, result, context)
         return
