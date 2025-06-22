@@ -37,6 +37,15 @@ TACTICS = {
     "tactic_balanced": "balanced",
 }
 
+# simple mapping of rarity to emoji for buttons
+RARITY_EMOJI = {
+    "legendary": "⭐️",
+    "mythic": "🟥",
+    "epic": "💎",
+    "rare": "🔵",
+    "common": "🟢",
+}
+
 TEAM_PAGE = 10
 
 
@@ -124,9 +133,11 @@ async def send_team_page(chat_id, user_id, context, edit=False, message_id=None)
     page_cards = ids[page * TEAM_PAGE:(page + 1) * TEAM_PAGE]
     buttons = []
     for cid in page_cards:
-        name = cards[cid]["name"]
+        card = cards[cid]
+        emoji = RARITY_EMOJI.get(card.get("rarity", "common"), "")
         mark = " ✅" if cid in selected else ""
-        buttons.append([InlineKeyboardButton(name + mark, callback_data=f"team_sel_{cid}")])
+        text_btn = f"{mark}{card['name']} ({card.get('pos','?')}) {emoji} {int(card.get('points',0))}"
+        buttons.append([InlineKeyboardButton(text_btn, callback_data=f"team_sel_{cid}")])
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton("◀️", callback_data="team_prev"))
@@ -261,6 +272,33 @@ async def _run_battle(user_id, opponent_name, team1, team2, tactic1, tactic2, na
     db.save_battle_result(user_id, opponent_name, result)
     return result
 
+
+def _format_log_page(user_data):
+    page = user_data.get("log_page", 0)
+    log = user_data.get("log", [])
+    score = user_data.get("score", {"team1": 0, "team2": 0})
+    total_pages = max(1, (len(log) + 9) // 10)
+    header = f"<b>🏒 {score['team1']} : {score['team2']} | стр. {page + 1}/{total_pages}</b>"
+    body_lines = log[page * 10:(page + 1) * 10]
+    body = "\n".join(body_lines)
+    buttons = []
+    if page > 0:
+        buttons.append(InlineKeyboardButton("◀️", callback_data="log_prev"))
+    if page < total_pages - 1:
+        buttons.append(InlineKeyboardButton("▶️", callback_data="log_next"))
+    buttons.append(InlineKeyboardButton("❌", callback_data="log_close"))
+    markup = InlineKeyboardMarkup([buttons])
+    return f"{header}\n{body}", markup
+
+
+async def _start_log_view(user_id: int, result: dict, context: ContextTypes.DEFAULT_TYPE):
+    ud = context.application.user_data[user_id]
+    ud["log"] = result.get("log", [])
+    ud["score"] = result.get("score", {"team1": 0, "team2": 0})
+    ud["log_page"] = 0
+    text, markup = _format_log_page(ud)
+    await context.bot.send_message(user_id, text or "Нет логов", reply_markup=markup, parse_mode="HTML")
+
 async def tactic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -277,10 +315,8 @@ async def tactic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             tactic2 = opp_data["tactic"]
             opp_name = opp_data.get("name", "Team2")
             result = await _run_battle(user_id, str(opp_id), team, opponent_team, tactic, tactic2, team_name, opp_name)
-            context.user_data["log"] = result["log"]
-            context.user_data["log_page"] = 0
-            await show_log_page(update, context)
-            await context.bot.send_message(opp_id, "Дуэль завершена.")
+            await _start_log_view(update.effective_user.id, result, context)
+            await _start_log_view(opp_id, result, context)
         else:
             PVP_QUEUE[user_id] = {"team": team, "tactic": tactic, "name": team_name}
             await query.edit_message_text("Ждём второго игрока...")
@@ -289,24 +325,11 @@ async def tactic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         team2 = await _build_team(0)
         tactic2 = random.choice(list(TACTICS.values()))
         result = await _run_battle(user_id, "Bot", team1, team2, tactic, tactic2, team_name, "Bot")
-        context.user_data["log"] = result["log"]
-        context.user_data["log_page"] = 0
-        await show_log_page(update, context)
+        await _start_log_view(update.effective_user.id, result, context)
 
 async def show_log_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    page = context.user_data.get("log_page", 0)
-    log = context.user_data.get("log", [])
-    lines = log[page * 5:(page + 1) * 5]
-    text = "\n".join(lines)
-    buttons = []
-    if page > 0:
-        buttons.append(InlineKeyboardButton("⬅️ Назад", callback_data="log_prev"))
-    if (page + 1) * 5 < len(log):
-        buttons.append(InlineKeyboardButton("➡️ Далее", callback_data="log_next"))
-    else:
-        buttons.append(InlineKeyboardButton("❌ Закрыть", callback_data="log_close"))
-    reply_markup = InlineKeyboardMarkup([buttons]) if buttons else None
-    await update.callback_query.edit_message_text(text or "Нет логов", reply_markup=reply_markup)
+    text, markup = _format_log_page(context.user_data)
+    await update.callback_query.edit_message_text(text or "Нет логов", reply_markup=markup, parse_mode="HTML")
 
 async def log_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -317,6 +340,7 @@ async def log_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "log_close":
         context.user_data.pop("log", None)
         context.user_data.pop("log_page", None)
+        context.user_data.pop("score", None)
         await query.message.delete()
         return
     await show_log_page(update, context)
