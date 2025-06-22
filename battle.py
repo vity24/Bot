@@ -148,15 +148,15 @@ class BattleSession:
                     attacker_team1["injured"] = True
                     self.log.append(f"Травма: {attacker_team1['name']} покидает матч")
                 elif attacker_team1["strength"] < 25 and random.random() < 0.1 * penalty1:
-                    self.log.append(f"Удаление: {attacker_team1['name']} (team1)")
+                    self.log.append(f"Удаление: {attacker_team1['name']} ({self.name1})")
                 else:
                     if self._attempt_goal(attacker_team1, goalie_team2, attack_mod1, defense_mod2):
                         self.score["team1"] += 1
                         self.contribution[attacker_team1["name"]] += 1
-                        self.log.append(f"Гол: {attacker_team1['name']} (team1)")
+                        self.log.append(f"Гол: {attacker_team1['name']} ({self.name1})")
                     else:
                         self.contribution[goalie_team2["name"]] += 1
-                        self.log.append(f"Сейв: {goalie_team2['name']} (team2)")
+                        self.log.append(f"Сейв: {goalie_team2['name']} ({self.name2})")
                 # team2 attack
                 attacker_team2 = random.choice(self._attackers(self.team2))
                 goalie_team1 = self._goalie(self.team1)
@@ -164,15 +164,15 @@ class BattleSession:
                     attacker_team2["injured"] = True
                     self.log.append(f"Травма: {attacker_team2['name']} покидает матч")
                 elif attacker_team2["strength"] < 25 and random.random() < 0.1 * penalty2:
-                    self.log.append(f"Удаление: {attacker_team2['name']} (team2)")
+                    self.log.append(f"Удаление: {attacker_team2['name']} ({self.name2})")
                 else:
                     if self._attempt_goal(attacker_team2, goalie_team1, attack_mod2, defense_mod1):
                         self.score["team2"] += 1
                         self.contribution[attacker_team2["name"]] += 1
-                        self.log.append(f"Гол: {attacker_team2['name']} (team2)")
+                        self.log.append(f"Гол: {attacker_team2['name']} ({self.name2})")
                     else:
                         self.contribution[goalie_team1["name"]] += 1
-                        self.log.append(f"Сейв: {goalie_team1['name']} (team1)")
+                        self.log.append(f"Сейв: {goalie_team1['name']} ({self.name1})")
             self._apply_fatigue(self.team1)
             self._apply_fatigue(self.team2)
 
