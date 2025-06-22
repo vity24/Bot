@@ -1,3 +1,4 @@
+from collections import OrderedDict
 import random
 import asyncio
 import re
@@ -92,7 +93,9 @@ def _get_user_cards_sync(user_id):
 
 async def get_user_cards(user_id):
     return await asyncio.to_thread(_get_user_cards_sync, user_id)
-PVP_QUEUE = {}
+
+LOG_LINES_PER_PAGE = 15
+PVP_QUEUE = OrderedDict()
 
 TACTICS = {
     "tactic_aggressive": "aggressive",
@@ -283,6 +286,16 @@ async def start_duel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await update.message.reply_text("Выбери тактику для дуэли:", reply_markup=InlineKeyboardMarkup(keyboard))
 
+async def duel_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    opponents = [(uid, data) for uid, data in PVP_QUEUE.items() if uid != user_id]
+    if not opponents:
+        await update.message.reply_text("Никто не ожидает дуэли.")
+        return
+    buttons = [[InlineKeyboardButton(data.get("username", str(uid)), callback_data=f"challenge_{uid}")] for uid, data in opponents]
+    buttons.append([InlineKeyboardButton("❌ Отмена", callback_data="duel_cancel")])
+    await update.message.reply_text("Выбери соперника:", reply_markup=InlineKeyboardMarkup(buttons))
+
 async def _build_team(user_id, ids=None):
     cards = await get_user_cards(user_id)
     team = []
@@ -340,9 +353,9 @@ def _format_log_page(user_data):
     page = user_data.get("log_page", 0)
     log = user_data.get("log", [])
     score = user_data.get("score", {"team1": 0, "team2": 0})
-    total_pages = max(1, (len(log) + 9) // 10)
+    total_pages = max(1, (len(log) + LOG_LINES_PER_PAGE - 1) // LOG_LINES_PER_PAGE)
     header = f"<b>🏒 {score['team1']} : {score['team2']} | стр. {page + 1}/{total_pages}</b>"
-    body_lines = log[page * 10:(page + 1) * 10]
+    body_lines = log[page * LOG_LINES_PER_PAGE:(page + 1) * LOG_LINES_PER_PAGE]
     body = "\n".join(body_lines)
     buttons = []
     if page > 0:
@@ -372,17 +385,31 @@ async def tactic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     team_name = team_data["name"] if team_data else "Team1"
     team = await _build_team(user_id, team_data["lineup"] if team_data else None)
     if mode == "pvp":
-        if PVP_QUEUE:
-            opp_id, opp_data = PVP_QUEUE.popitem()
-            opponent_team = opp_data["team"]
-            tactic2 = opp_data["tactic"]
-            opp_name = opp_data.get("name", "Team2")
-            result = await _run_battle(user_id, str(opp_id), team, opponent_team, tactic, tactic2, team_name, opp_name)
+        entry = {
+            "team": team,
+            "tactic": tactic,
+            "name": team_name,
+            "username": query.from_user.username or str(user_id),
+        }
+        PVP_QUEUE[user_id] = entry
+        opponents = [(uid, data) for uid, data in PVP_QUEUE.items() if uid != user_id]
+        if not opponents:
+            markup = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отменить", callback_data="duel_cancel")]])
+            await query.edit_message_text("Ждём второго игрока...", reply_markup=markup)
+        elif len(opponents) == 1:
+            opp_id, opp_data = opponents[0]
+            PVP_QUEUE.pop(opp_id, None)
+            PVP_QUEUE.pop(user_id, None)
+            result = await _run_battle(user_id, str(opp_id), team, opp_data["team"], tactic, opp_data["tactic"], team_name, opp_data["name"])
             await _start_log_view(update.effective_user.id, result, context)
             await _start_log_view(opp_id, result, context)
         else:
-            PVP_QUEUE[user_id] = {"team": team, "tactic": tactic, "name": team_name}
-            await query.edit_message_text("Ждём второго игрока...")
+            buttons = [
+                [InlineKeyboardButton(data.get("username", str(uid)), callback_data=f"challenge_{uid}")]
+                for uid, data in opponents
+            ]
+            buttons.append([InlineKeyboardButton("❌ Отменить", callback_data="duel_cancel")])
+            await query.edit_message_text("Выбери соперника:", reply_markup=InlineKeyboardMarkup(buttons))
     else:
         team1 = team
         team2 = await _build_team(0)
@@ -407,6 +434,35 @@ async def log_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.delete()
         return
     await show_log_page(update, context)
+
+async def duel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+    user_id = query.from_user.id
+    if data == "duel_cancel":
+        PVP_QUEUE.pop(user_id, None)
+        await query.edit_message_text("Поиск дуэли отменён.")
+        return
+    if data.startswith("challenge_"):
+        opp_id = int(data.split("_")[1])
+        if opp_id not in PVP_QUEUE or user_id not in PVP_QUEUE:
+            await query.answer("Игрок недоступен", show_alert=True)
+            return
+        opp_data = PVP_QUEUE.pop(opp_id)
+        my_data = PVP_QUEUE.pop(user_id)
+        result = await _run_battle(
+            user_id,
+            str(opp_id),
+            my_data["team"],
+            opp_data["team"],
+            my_data["tactic"],
+            opp_data["tactic"],
+            my_data["name"],
+            opp_data["name"],
+        )
+        await _start_log_view(user_id, result, context)
+        await _start_log_view(opp_id, result, context)
+        return
 
 async def show_battle_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id

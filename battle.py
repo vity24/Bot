@@ -20,6 +20,27 @@ TACTIC_MODIFIERS = {
     "defensive": {"attack": 0.9, "defense": 1.1, "penalty": 1.0},
     "balanced": {"attack": 1.0, "defense": 1.0, "penalty": 1.0},
 }
+GOAL_MESSAGES = [
+    "Гол: {name} ({team}) поражает ворота!",
+    "Шайба в сетке! {name} приносит очко команде {team}!",
+    "{name} ({team}) забивает блестящий гол!"
+]
+SAVE_MESSAGES = [
+    "Сейв: {name} ({team}) отражает бросок!",
+    "{name} ({team}) спасает свою команду!",
+    "Вратарь {name} ({team}) делает шикарный сейв!"
+]
+PENALTY_MESSAGES = [
+    "Удаление: {name} ({team}) отправляется на штрафной бокс.",
+    "Судья фиксирует удаление игрока {name} ({team}).",
+    "{name} ({team}) нарушает правила и удаляется."
+]
+INJURY_MESSAGES = [
+    "Травма: {name} покидает матч.",
+    "{name} получает травму и уходит со льда.",
+    "Ай! {name} не может продолжить игру."
+]
+
 
 class BattleSession:
     def __init__(self, team1: List[Dict], team2: List[Dict], tactic1: str = "balanced", tactic2: str = "balanced", name1: str = "team1", name2: str = "team2"):
@@ -146,33 +167,39 @@ class BattleSession:
                 goalie_team2 = self._goalie(self.team2)
                 if random.random() < 0.02:
                     attacker_team1["injured"] = True
-                    self.log.append(f"Травма: {attacker_team1['name']} покидает матч")
+                    self.log.append(random.choice(INJURY_MESSAGES).format(name=attacker_team1["name"]))
                 elif attacker_team1["strength"] < 25 and random.random() < 0.1 * penalty1:
-                    self.log.append(f"Удаление: {attacker_team1['name']} ({self.name1})")
+                    self.log.append(random.choice(PENALTY_MESSAGES).format(name=attacker_team1["name"], team=self.name1))
                 else:
                     if self._attempt_goal(attacker_team1, goalie_team2, attack_mod1, defense_mod2):
                         self.score["team1"] += 1
                         self.contribution[attacker_team1["name"]] += 1
-                        self.log.append(f"Гол: {attacker_team1['name']} ({self.name1})")
+                        self.log.append(random.choice(GOAL_MESSAGES).format(name=attacker_team1["name"], team=self.name1))
                     else:
                         self.contribution[goalie_team2["name"]] += 1
-                        self.log.append(f"Сейв: {goalie_team2['name']} ({self.name2})")
+                        if random.random() < 0.3:
+                            self.log.append(f"Промах: {attacker_team1['name']} ({self.name1})")
+                        else:
+                            self.log.append(random.choice(SAVE_MESSAGES).format(name=goalie_team2["name"], team=self.name2))
                 # team2 attack
                 attacker_team2 = random.choice(self._attackers(self.team2))
                 goalie_team1 = self._goalie(self.team1)
                 if random.random() < 0.02:
                     attacker_team2["injured"] = True
-                    self.log.append(f"Травма: {attacker_team2['name']} покидает матч")
+                    self.log.append(random.choice(INJURY_MESSAGES).format(name=attacker_team2["name"]))
                 elif attacker_team2["strength"] < 25 and random.random() < 0.1 * penalty2:
-                    self.log.append(f"Удаление: {attacker_team2['name']} ({self.name2})")
+                    self.log.append(random.choice(PENALTY_MESSAGES).format(name=attacker_team2["name"], team=self.name2))
                 else:
                     if self._attempt_goal(attacker_team2, goalie_team1, attack_mod2, defense_mod1):
                         self.score["team2"] += 1
                         self.contribution[attacker_team2["name"]] += 1
-                        self.log.append(f"Гол: {attacker_team2['name']} ({self.name2})")
+                        self.log.append(random.choice(GOAL_MESSAGES).format(name=attacker_team2["name"], team=self.name2))
                     else:
                         self.contribution[goalie_team1["name"]] += 1
-                        self.log.append(f"Сейв: {goalie_team1['name']} ({self.name1})")
+                        if random.random() < 0.3:
+                            self.log.append(f"Промах: {attacker_team2['name']} ({self.name2})")
+                        else:
+                            self.log.append(random.choice(SAVE_MESSAGES).format(name=goalie_team1["name"], team=self.name1))
             self._apply_fatigue(self.team1)
             self._apply_fatigue(self.team2)
 
@@ -190,11 +217,11 @@ class BattleSession:
         mvp = max(self.contribution.items(), key=lambda x: x[1])[0] if self.contribution else ""
         self.log.append(f"Финальный счёт: {self.score['team1']} - {self.score['team2']}")
         if winner == "team1":
-            self.log.append(f"Победа {self.name1}")
+            self.log.append(f"<b>Победа {self.name1}</b>")
         elif winner == "team2":
-            self.log.append(f"Победа {self.name2}")
+            self.log.append(f"<b>Победа {self.name2}</b>")
         else:
-            self.log.append("Ничья")
+            self.log.append("<b>Ничья</b>")
         return {
             "winner": winner,
             "score": self.score,
