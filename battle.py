@@ -22,11 +22,13 @@ TACTIC_MODIFIERS = {
 }
 
 class BattleSession:
-    def __init__(self, team1: List[Dict], team2: List[Dict], tactic1: str = "balanced", tactic2: str = "balanced"):
+    def __init__(self, team1: List[Dict], team2: List[Dict], tactic1: str = "balanced", tactic2: str = "balanced", name1: str = "team1", name2: str = "team2"):
         self.team1 = [p.copy() for p in team1]
         self.team2 = [p.copy() for p in team2]
         self.tactic1 = tactic1 if tactic1 in TACTIC_MODIFIERS else "balanced"
         self.tactic2 = tactic2 if tactic2 in TACTIC_MODIFIERS else "balanced"
+        self.name1 = name1
+        self.name2 = name2
         self.log: List[str] = []
         self.score = {"team1": 0, "team2": 0}
         self.contribution = defaultdict(int)
@@ -186,6 +188,13 @@ class BattleSession:
             winner = "draw"
 
         mvp = max(self.contribution.items(), key=lambda x: x[1])[0] if self.contribution else ""
+        self.log.append(f"Финальный счёт: {self.score['team1']} - {self.score['team2']}")
+        if winner == "team1":
+            self.log.append(f"Победа {self.name1}")
+        elif winner == "team2":
+            self.log.append(f"Победа {self.name2}")
+        else:
+            self.log.append("Ничья")
         return {
             "winner": winner,
             "score": self.score,
