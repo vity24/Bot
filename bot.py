@@ -1692,11 +1692,7 @@ async def cleanup_expired(context: ContextTypes.DEFAULT_TYPE):
             if now - created > TTL:
                 d.pop(k, None)
 
-async def main():
-    setup_db()
-    application = Application.builder().token(TOKEN).build()
-    application.job_queue.run_repeating(cleanup_expired, interval=3600)
-
+async def post_init(application: Application):
     bot_commands = [
         BotCommand("start", "Приветствие и справка"),
         BotCommand("card", "Получить новую карточку"),
@@ -1712,6 +1708,16 @@ async def main():
         BotCommand("clubs", "Карточки по клубам"),
     ]
     await application.bot.set_my_commands(bot_commands)
+
+def main():
+    setup_db()
+    application = (
+        Application.builder()
+        .token(TOKEN)
+        .post_init(post_init)
+        .build()
+    )
+    application.job_queue.run_repeating(cleanup_expired, interval=3600)
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("card", card))
@@ -1744,9 +1750,9 @@ async def main():
 
 
 
-    await application.run_polling()
+    application.run_polling()
 
 if __name__ == "__main__":
-    import asyncio, logging
+    import logging
     logging.basicConfig(level=logging.INFO)
-    asyncio.run(main())
+    main()
