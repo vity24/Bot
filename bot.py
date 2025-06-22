@@ -129,6 +129,8 @@ CARD_FIELDS = [
     "weight", "rarity", "stats", "team_en", "team_ru"
 ]
 CARD_CACHE = {}
+RANK_CACHE: dict[int, tuple[int, int, float]] = {}
+RANK_TTL = 600  # seconds
 
 def load_card_cache(force=False):
     """Загружаем все карточки в память для сокращения обращений к БД."""
@@ -327,7 +329,7 @@ def is_admin(user_id):
 
 async def send_ranking_push(user_id, context, chat_id):
     # теперь пушим всем (можно и админам)
-    rank, total = await get_user_rank(user_id)
+    rank, total = await get_user_rank_cached(user_id)
     if rank > total:
         return
     if rank <= 5:
@@ -428,6 +430,15 @@ async def get_user_rank(user_id):
         rank = total
     return rank, total
 
+
+async def get_user_rank_cached(user_id):
+    cached = RANK_CACHE.get(user_id)
+    if cached and time.time() - cached[2] < RANK_TTL:
+        return cached[0], cached[1]
+    rank, total = await get_user_rank(user_id)
+    RANK_CACHE[user_id] = (rank, total, time.time())
+    return rank, total
+
 def get_weekly_progress(user_id):
     conn = get_db()
     c = conn.cursor()
@@ -462,7 +473,7 @@ async def me(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_admin(user_id):
         await update.message.reply_text("У админов нет профиля в рейтинге.")
         return
-    rank, total = await get_user_rank(user_id)
+    rank, total = await get_user_rank_cached(user_id)
     progress = get_weekly_progress(user_id)
     score = await calculate_user_score(user_id)
     medal = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else ""
@@ -657,7 +668,9 @@ async def card(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='Markdown'
         )
 
-    await send_ranking_push(user_id, context, update.message.chat_id)
+    context.application.create_task(
+        send_ranking_push(user_id, context, update.message.chat_id)
+    )
 
 # --- TRADE (ОБМЕНЫ) ---
 
