@@ -595,6 +595,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/deletecard <имя игрока> — удалить карточку по имени\n"
             "/resetweek — обновить недельные приросты\n"
             "/editcard — редактировать картоки (очки и редкость)"
+            "\n/giveallcards — выдать все недостающие карточки"
         )
     await update.message.reply_text(text)
 
@@ -1192,7 +1193,7 @@ def get_user_club_cards(user_id, club_key):
         card_copy = card.copy()
         card_copy["count"] = cnt
         cards.append(card_copy)
-    return cards, len(set(ids))
+    return cards, sum(count_dict.values())
 
 async def send_cards_page(chat_id, user_id, context, page=0, edit_message=False, message_id=None):
     # Получаем все карточки пользователя
@@ -1402,17 +1403,12 @@ async def clubs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     totals = get_club_total_counts()
     user_cnt = get_user_club_counts(uid)
 
-    buttons, row = [], []
+    buttons = []
     for key in all_keys:
         have = user_cnt.get(key, 0)
         total = totals.get(key, 0)
         label = f"{key} {have}/{total}"
-        row.append(InlineKeyboardButton(label, callback_data=f"club_sel_{key}"))
-        if len(row) == 2:
-            buttons.append(row)
-            row = []
-    if row:
-        buttons.append(row)
+        buttons.append([InlineKeyboardButton(label, callback_data=f"club_sel_{key}")])
 
     await update.message.reply_text(
         "Выбери клуб:",
@@ -1488,18 +1484,14 @@ async def club_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
     except BadRequest:
         pass
-    cards, unique = get_user_club_cards(user_id, club_key)
+    cards, total = get_user_club_cards(user_id, club_key)
     if not cards:
         await query.edit_message_text("У тебя нет карточек этого клуба.")
         return
-    lines = []
-    for card in cards:
-        line = f"{card['name']} ({RARITY_RU.get(card['rarity'], card['rarity'])})"
-        if card['count'] > 1:
-            line += f" x{card['count']}"
-        lines.append(line)
-    text = f"Карточки {club_key} ({unique} уник.):\n" + "\n".join(lines)
-    await query.edit_message_text(text)
+
+    cards.sort(key=lambda c: (RARITY_ORDER.get(c["rarity"], 99), c["name"]))
+    user_carousel[user_id] = {"cards": cards, "idx": 0, "all_count": total}
+    await send_card_page(query.message.chat_id, user_id, context)
 
 async def myid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Твой Telegram user_id: {update.effective_user.id}")
@@ -1537,6 +1529,33 @@ async def deletecard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Карточка игрока '{name}' удалена.")
         refresh_card_cache(row[0])
     conn.close()
+
+async def giveallcards(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in ADMINS:
+        await update.message.reply_text("⛔️ Нет прав для этой команды.")
+        return
+
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT id FROM cards")
+    all_ids = {row[0] for row in c.fetchall()}
+    c.execute("SELECT card_id FROM inventory WHERE user_id=?", (user_id,))
+    have_ids = {row[0] for row in c.fetchall()}
+    missing = all_ids - have_ids
+
+    now = int(time.time())
+    for cid in missing:
+        c.execute(
+            "INSERT INTO inventory (user_id, card_id, time_got) VALUES (?, ?, ?)",
+            (user_id, cid, now),
+        )
+    conn.commit()
+    conn.close()
+
+    await update.message.reply_text(
+        f"✅ Выдано {len(missing)} новых карточек."
+    )
 
     admin_edit_state = {}  # user_id: {step, card_id}
 EDIT_CARDS_PER_PAGE = 20
@@ -1726,6 +1745,7 @@ def main():
     application.add_handler(CommandHandler("myid", myid))
     application.add_handler(CommandHandler("nocooldown", nocooldown))
     application.add_handler(CommandHandler("deletecard", deletecard))
+    application.add_handler(CommandHandler("giveallcards", giveallcards))
     application.add_handler(CommandHandler("me", me))
     application.add_handler(CommandHandler("top", top))
     application.add_handler(CommandHandler("top50", top50))
