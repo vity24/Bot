@@ -3,6 +3,7 @@ import time
 import random
 import sqlite3
 import re
+import asyncio
 async def is_user_subscribed(bot, user_id):
     try:
         for ch in CHANNELS:
@@ -260,7 +261,7 @@ def pos_to_rus(pos):
 def flag_from_iso3(iso):
     return ISO3_TO_FLAG.get((iso or "").upper(), "")
 
-def get_random_card():
+def _get_random_card_sync():
     conn = get_db()
     c = conn.cursor()
     rarity = weighted_random_rarity()
@@ -279,7 +280,10 @@ def get_random_card():
         return dict(zip(fields, row))
     return None
 
-def get_user_cards(user_id):
+async def get_random_card(*args, **kwargs):
+    return await asyncio.to_thread(_get_random_card_sync, *args, **kwargs)
+
+def _get_user_cards_sync(user_id):
     conn = get_db()
     c = conn.cursor()
     c.execute("SELECT card_id FROM inventory WHERE user_id=?", (user_id,))
@@ -297,19 +301,22 @@ def get_user_cards(user_id):
             cards.append(s)
     return cards
 
+async def get_user_cards(*args, **kwargs):
+    return await asyncio.to_thread(_get_user_cards_sync, *args, **kwargs)
+
 def is_admin(user_id):
     return user_id in ADMINS
 
 async def send_ranking_push(user_id, context, chat_id):
     # теперь пушим всем (можно и админам)
-    rank, total = get_user_rank(user_id)
+    rank, total = await get_user_rank(user_id)
     if rank > total:
         return
     if rank <= 5:
         msg = f"Ты уже в ТОП-5 — круто! Продолжай собирать и держись в лидерах! 🏒"
     else:
-        top5 = get_top_users(limit=5)
-        user_score = calculate_user_score(user_id)
+        top5 = await get_top_users(limit=5)
+        user_score = await calculate_user_score(user_id)
         if len(top5) == 5:
             score5 = int(top5[4][2])
             delta = int(score5 - user_score)
@@ -339,7 +346,7 @@ def parse_points(stats, pos):
         m = re.search(r'Очки\s+(\d+)', stats or "")
         return int(m.group(1)) if m else 0
 
-def calculate_user_score(user_id):
+def _calculate_user_score_sync(user_id):
     conn = get_db()
     c = conn.cursor()
     c.execute("SELECT card_id FROM inventory WHERE user_id=?", (user_id,))
@@ -361,7 +368,10 @@ def calculate_user_score(user_id):
 
     return total_score
 
-def get_user_rank(user_id):
+async def calculate_user_score(*args, **kwargs):
+    return await asyncio.to_thread(_calculate_user_score_sync, *args, **kwargs)
+
+def _get_user_rank_sync(user_id):
     conn = get_db()
     c = conn.cursor()
     c.execute("SELECT id FROM users")
@@ -369,7 +379,7 @@ def get_user_rank(user_id):
     user_ids = [row[0] for row in c.fetchall() if row[0] not in ADMINS]
     scores = []
     for uid in user_ids:
-        score = calculate_user_score(uid)
+        score = _calculate_user_score_sync(uid)
         scores.append((uid, score))
     scores.sort(key=lambda x: x[1], reverse=True)
     total = len(scores)
@@ -382,17 +392,35 @@ def get_user_rank(user_id):
     conn.close()
     return rank, total
 
+async def get_user_rank(user_id):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT id FROM users")
+    user_ids = [row[0] for row in c.fetchall() if row[0] not in ADMINS]
+    conn.close()
+    scores = await asyncio.gather(*[calculate_user_score(uid) for uid in user_ids])
+    pairs = list(zip(user_ids, scores))
+    pairs.sort(key=lambda x: x[1], reverse=True)
+    total = len(pairs)
+    for idx, (uid, _) in enumerate(pairs):
+        if uid == user_id:
+            rank = idx + 1
+            break
+    else:
+        rank = total
+    return rank, total
+
 def get_weekly_progress(user_id):
     conn = get_db()
     c = conn.cursor()
     c.execute("SELECT last_week_score FROM users WHERE id=?", (user_id,))
     row = c.fetchone()
     conn.close()
-    current = calculate_user_score(user_id)
+    current = _calculate_user_score_sync(user_id)
     last = row[0] if row else 0
     return current - last
 
-def get_top_users(limit=10):
+def _get_top_users_sync(limit=10):
     conn = get_db()
     c = conn.cursor()
     c.execute("SELECT id, username FROM users")
@@ -400,11 +428,14 @@ def get_top_users(limit=10):
     users = [(uid, uname) for (uid, uname) in c.fetchall() if uid not in ADMINS]
     user_scores = []
     for uid, uname in users:
-        score = calculate_user_score(uid)
+        score = _calculate_user_score_sync(uid)
         user_scores.append((uid, uname, score))
     user_scores.sort(key=lambda x: x[2], reverse=True)
     conn.close()
     return user_scores[:limit]
+
+async def get_top_users(*args, **kwargs):
+    return await asyncio.to_thread(_get_top_users_sync, *args, **kwargs)
 
 # ------- КОМАНДЫ РЕЙТИНГА ----------
 @require_subscribe
@@ -413,9 +444,9 @@ async def me(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_admin(user_id):
         await update.message.reply_text("У админов нет профиля в рейтинге.")
         return
-    rank, total = get_user_rank(user_id)
+    rank, total = await get_user_rank(user_id)
     progress = get_weekly_progress(user_id)
-    score = calculate_user_score(user_id)
+    score = await calculate_user_score(user_id)
     medal = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else ""
     msg = (
         f"👤 Твой профиль:\n"
@@ -432,7 +463,7 @@ async def me(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @require_subscribe
 async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    top10 = get_top_users(limit=10)
+    top10 = await get_top_users(limit=10)
     text = (
         "🏆 ТОП-10 коллекционеров NHL:\n"
         "🔹 Полевой: 'Очки' на карточке\n"
@@ -447,7 +478,7 @@ async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @require_subscribe
 async def top50(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    top50 = get_top_users(limit=50)
+    top50 = await get_top_users(limit=50)
     text = "🏆 ТОП-50 коллекционеров NHL:\n\n"
     for i, (uid, uname, score) in enumerate(top50, 1):
         medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else ""
@@ -465,7 +496,7 @@ async def resetweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
     c.execute("SELECT id FROM users")
     users = c.fetchall()
     for (uid,) in users:
-        score = calculate_user_score(uid)
+        score = await calculate_user_score(uid)
         c.execute("UPDATE users SET last_week_score=? WHERE id=?", (score, uid))
     conn.commit()
     conn.close()
@@ -570,7 +601,7 @@ async def card(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             conn.close()
             return
-    card_obj = get_random_card()
+    card_obj = await get_random_card()
     if not card_obj:
         await update.message.reply_text("В базе нет карточек с фото или данного раритета.")
         conn.close()
