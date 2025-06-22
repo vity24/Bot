@@ -18,7 +18,8 @@ def _ensure_user_columns(conn):
     if 'xp_daily' not in cols:
         cur.execute("ALTER TABLE users ADD COLUMN xp_daily INTEGER DEFAULT 0")
     if 'last_xp_reset' not in cols:
-        cur.execute("ALTER TABLE users ADD COLUMN last_xp_reset DATE DEFAULT CURRENT_DATE")
+        cur.execute("ALTER TABLE users ADD COLUMN last_xp_reset DATE")
+        cur.execute("UPDATE users SET last_xp_reset = DATE('now') WHERE last_xp_reset IS NULL")
     if 'win_streak' not in cols:
         cur.execute("ALTER TABLE users ADD COLUMN win_streak INTEGER DEFAULT 0")
     conn.commit()
