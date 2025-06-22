@@ -32,6 +32,21 @@ def save_battle_result(user_id, opponent_name, result):
     conn = get_db()
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS battles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            opponent TEXT,
+            result TEXT,
+            score_team1 INTEGER,
+            score_team2 INTEGER,
+            mvp TEXT,
+            log TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute(
+        """
         INSERT INTO battles (user_id, opponent, result, score_team1, score_team2, mvp, log)
         VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
@@ -51,6 +66,21 @@ def save_battle_result(user_id, opponent_name, result):
 
 def get_battle_history(user_id, limit=5):
     conn = get_db()
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS battles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            opponent TEXT,
+            result TEXT,
+            score_team1 INTEGER,
+            score_team2 INTEGER,
+            mvp TEXT,
+            log TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
     cur = conn.cursor()
     cur.execute(
         """SELECT timestamp, opponent, result, score_team1, score_team2, mvp
@@ -81,6 +111,16 @@ def setup_team_db():
 def save_team(user_id, name, lineup, bench):
     conn = get_db()
     conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS teams (
+            user_id INTEGER PRIMARY KEY,
+            name TEXT,
+            lineup TEXT,
+            bench TEXT
+        )
+        """
+    )
+    conn.execute(
         "REPLACE INTO teams (user_id, name, lineup, bench) VALUES (?, ?, ?, ?)",
         (user_id, name, json.dumps(lineup), json.dumps(bench)),
     )
@@ -90,6 +130,16 @@ def save_team(user_id, name, lineup, bench):
 
 def get_team(user_id):
     conn = get_db()
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS teams (
+            user_id INTEGER PRIMARY KEY,
+            name TEXT,
+            lineup TEXT,
+            bench TEXT
+        )
+        """
+    )
     cur = conn.cursor()
     cur.execute("SELECT name, lineup, bench FROM teams WHERE user_id=?", (user_id,))
     row = cur.fetchone()
