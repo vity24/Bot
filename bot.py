@@ -249,6 +249,26 @@ def setup_db():
         c.execute("ALTER TABLE users ADD COLUMN invited_by INTEGER DEFAULT NULL")
     except sqlite3.OperationalError:
         pass
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN xp INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN level INTEGER DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN xp_daily INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN last_xp_reset DATE DEFAULT CURRENT_DATE")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN win_streak INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
     # ... остальной код создания таблиц ...
     conn.commit()
     conn.close()
@@ -452,13 +472,13 @@ def get_weekly_progress(user_id):
 def _get_top_users_sync(limit=10):
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT id, username FROM users")
+    c.execute("SELECT id, username, level FROM users")
     # Исключаем админов из топа
-    users = [(uid, uname) for (uid, uname) in c.fetchall() if uid not in ADMINS]
+    users = [(uid, uname, lvl) for (uid, uname, lvl) in c.fetchall() if uid not in ADMINS]
     user_scores = []
-    for uid, uname in users:
+    for uid, uname, lvl in users:
         score = _calculate_user_score_sync(uid)
-        user_scores.append((uid, uname, score))
+        user_scores.append((uid, uname, score, lvl))
     user_scores.sort(key=lambda x: x[2], reverse=True)
     conn.close()
     return user_scores[:limit]
@@ -476,12 +496,15 @@ async def me(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rank, total = await get_user_rank_cached(user_id)
     progress = get_weekly_progress(user_id)
     score = await calculate_user_score(user_id)
+    xp, lvl = db.get_xp_level(user_id)
+    to_next = xp_to_next(xp)
     medal = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else ""
     msg = (
         f"👤 Твой профиль:\n"
         f"• Очки: {int(score)}\n"
         f"• Место в рейтинге: #{rank} из {total} {medal}\n"
         f"• Прирост за неделю: {('+' if progress >= 0 else '')}{int(progress)} очк{'а' if abs(progress)%10 in [2,3,4] else ''}{' — молодец!' if progress > 0 else ''}"
+        f"\n• Уровень Lv {lvl}  (до ↑ {to_next} XP)"
     )
     # === ДОБАВЛЯЕШЬ ВОТ ЭТИ 3 СТРОКИ ===
     referrals = get_referral_count(user_id)
@@ -489,6 +512,17 @@ async def me(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg += f"\n\n👥 Приглашено: {referrals}\n{achv}"
     # ====================================
     await update.message.reply_text(msg)
+
+@require_subscribe
+async def xp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    xp, lvl = db.get_xp_level(uid)
+    cap = 150 * (lvl ** 2)
+    bar_fill = int(10 * xp / cap)
+    bar = '▓' * bar_fill + '░' * (10 - bar_fill)
+    await update.message.reply_text(
+        f"📈 Lv {lvl} {bar}  {xp}/{cap} XP"
+    )
 
 @require_subscribe
 async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -499,10 +533,25 @@ async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔹 Вратарь: Победы ×2 + (30 – КН×10)\n"
         "🔹 Чем реже карта, тем больше очков!\n\n"
     )
-    for i, (uid, uname, score) in enumerate(top10, 1):
+    for i, (uid, uname, score, lvl) in enumerate(top10, 1):
         medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else ""
         username = (f"@{uname}" if uname else f"ID:{uid}")
-        text += f"{i}. {username} — {int(score)} {medal}\n"
+        text += f"{i}. {username} — {int(score)} | Lv {lvl} {medal}\n"
+    await update.message.reply_text(text)
+
+@require_subscribe
+async def topxp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    conn = get_db()
+    c = conn.cursor()
+    placeholders = ','.join('?' for _ in ADMINS) or 'NULL'
+    query = f"SELECT id, username, level, xp FROM users WHERE id NOT IN ({placeholders}) ORDER BY level DESC, xp DESC LIMIT 10"
+    c.execute(query, tuple(ADMINS))
+    rows = c.fetchall()
+    conn.close()
+    text = "🏅 ТОП по уровню:\n"
+    for i, (uid, uname, lvl, xp) in enumerate(rows, 1):
+        username = f"@{uname}" if uname else f"ID:{uid}"
+        text += f"{i}. {username} — Lv {lvl}\n"
     await update.message.reply_text(text)
 
 @require_subscribe
@@ -1775,7 +1824,9 @@ def main():
     application.add_handler(CommandHandler("deletecard", deletecard))
     application.add_handler(CommandHandler("giveallcards", giveallcards))
     application.add_handler(CommandHandler("me", me))
+    application.add_handler(CommandHandler("xp", xp))
     application.add_handler(CommandHandler("top", top))
+    application.add_handler(CommandHandler("topxp", topxp))
     application.add_handler(CommandHandler("top50", top50))
     application.add_handler(CommandHandler("resetweek", resetweek))
     application.add_handler(CommandHandler("trade", trade))
