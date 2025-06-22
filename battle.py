@@ -109,10 +109,6 @@ class BattleSession:
         self.log: List[str] = []
         self.score = {"team1": 0, "team2": 0}
         self.contribution = defaultdict(int)
-        ids1 = {p["id"] for p in self.team1}
-        ids2 = {p["id"] for p in self.team2}
-        if ids1 & ids2:
-            raise ValueError("Один или несколько игроков используются в обеих командах.")
         self._prepare_players(self.team1)
         self._prepare_players(self.team2)
         self.avg_power1 = sum(p["strength"] for p in self.team1) / len(self.team1)
