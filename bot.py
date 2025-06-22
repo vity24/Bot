@@ -1737,6 +1737,7 @@ async def post_init(application: Application):
 def main():
     setup_db()
     db.setup_battle_db()
+    db.setup_team_db()
     application = (
         Application.builder()
         .token(TOKEN)
@@ -1770,11 +1771,14 @@ def main():
     application.add_handler(CommandHandler("topref", topref))
     application.add_handler(CommandHandler("clubs", clubs))
     application.add_handler(CommandHandler("club", clubs))
+    application.add_handler(CommandHandler("team", handlers.create_team))
+    application.add_handler(CallbackQueryHandler(handlers.team_callback, pattern="^team_"))
+    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handlers.team_text_handler))
     application.add_handler(CommandHandler("fight", handlers.start_fight))
     application.add_handler(CommandHandler("duel", handlers.start_duel))
     application.add_handler(CommandHandler("history", handlers.show_battle_history))
     application.add_handler(CallbackQueryHandler(handlers.tactic_callback, pattern="^tactic_"))
-    application.add_handler(CallbackQueryHandler(handlers.log_callback, pattern="^log_(prev|next)$"))
+    application.add_handler(CallbackQueryHandler(handlers.log_callback, pattern="^log_(prev|next|close)$"))
     application.add_handler(CallbackQueryHandler(club_callback, pattern="^club_sel_"))
 
 
