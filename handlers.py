@@ -54,6 +54,9 @@ async def team_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tb["step"] = "select"
         tb["selected"] = []
         tb["page"] = 0
+        # explicitly store the updated state back just in case the dict
+        # reference is not preserved by the persistence implementation
+        context.user_data["team_build"] = tb
         await send_team_page(update.message.chat_id, update.effective_user.id, context)
 
 
