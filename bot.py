@@ -3,6 +3,18 @@ import time
 import random
 import sqlite3
 import re
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+async def safe_answer(query, *args, **kwargs):
+    try:
+        await query.answer(*args, **kwargs)
+    except BadRequest:
+        pass
+
+
 async def is_user_subscribed(bot, user_id):
     try:
         for ch in CHANNELS:
@@ -47,7 +59,7 @@ async def check_subscribe_callback(update: Update, context: ContextTypes.DEFAULT
             )
         )
     else:
-        await query.answer("❗️ Подпишись на оба канала и попробуй снова.", show_alert=True)
+        await safe_answer(query,"❗️ Подпишись на оба канала и попробуй снова.", show_alert=True)
 
 def require_subscribe(func):
     @wraps(func)
@@ -813,7 +825,7 @@ async def trade_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     user_id = query.from_user.id
     if user_id not in pending_trades:
-        await query.answer("Нет активного обмена.")
+        await safe_answer(query,"Нет активного обмена.")
         return
     trade_state = pending_trades[user_id]
     page = trade_state.get('page', 0)
@@ -822,7 +834,7 @@ async def trade_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif query.data == "trade_page_next":
         page = page + 1
     try:
-        await query.answer()
+        await safe_answer(query)
     except BadRequest:
         return
     await show_trade_selector(
@@ -837,7 +849,7 @@ async def trade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
 
     if user_id not in pending_trades:
-        await query.answer("Нет активного обмена.")
+        await safe_answer(query,"Нет активного обмена.")
         return
 
     trade_state = pending_trades[user_id]
@@ -859,7 +871,7 @@ async def trade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             edit_message_id=query.message.message_id
         )
         try:
-            await query.answer()
+            await safe_answer(query)
         except BadRequest:
             pass
         return
@@ -872,7 +884,7 @@ async def trade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sel.remove(card_id)
         else:
             if len(sel) >= MAX_TRADE_CARDS:
-                await query.answer(f"Можно выбрать не более {MAX_TRADE_CARDS} карт.")
+                await safe_answer(query,f"Можно выбрать не более {MAX_TRADE_CARDS} карт.")
                 return
             sel.add(card_id)
         trade_state['selected'] = sel
@@ -883,7 +895,7 @@ async def trade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             edit_message_id=query.message.message_id
         )
         try:
-            await query.answer()
+            await safe_answer(query)
         except BadRequest:
             pass
         return
@@ -892,7 +904,7 @@ async def trade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "trade_confirm":
         if stage == "initiator_selecting":
             if not trade_state.get('selected'):
-                await query.answer("Выбери хотя бы одну карту для обмена.")
+                await safe_answer(query,"Выбери хотя бы одну карту для обмена.")
                 return
             pending_trades[user_id]['stage'] = 'waiting_accept'
             pending_trades[partner_id] = {
@@ -916,7 +928,7 @@ async def trade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif stage == "acceptor_selecting":
             if not trade_state.get('selected'):
-                await query.answer("Выбери хотя бы одну карту для обмена.")
+                await safe_answer(query,"Выбери хотя бы одну карту для обмена.")
                 return
             offer1 = set(trade_state['offer'])
             offer2 = set(trade_state['selected'])
@@ -979,7 +991,7 @@ async def trade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 found = k
                 break
         if not found:
-            await query.answer("Нет ожидающего подтверждения обмена.")
+            await safe_answer(query,"Нет ожидающего подтверждения обмена.")
             return
         trade_confirmations[found]["confirmed"].add(user_id)
         if len(trade_confirmations[found]["confirmed"]) == 2:
@@ -1002,7 +1014,7 @@ async def trade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 found = k
                 break
         if not found:
-            await query.answer("Нет ожидающего подтверждения обмена.")
+            await safe_answer(query,"Нет ожидающего подтверждения обмена.")
             return
         vals = trade_confirmations.pop(found)
         await context.bot.send_message(vals["initiator"], "Обмен отменён одним из участников.")
@@ -1012,7 +1024,7 @@ async def trade_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Обмен отменён.")
         return
 
-    await query.answer("Неизвестное действие.")
+    await safe_answer(query,"Неизвестное действие.")
 
 async def show_trade_confirmation(context, uid, other_uid, offer1, offer2):
     # Кто ты: инициатор или акцептор
@@ -1447,7 +1459,7 @@ async def mycards_pagination_callback(update: Update, context: ContextTypes.DEFA
     page = max(0, page)
     user_cards_pagination[user_id] = page
     try:
-        await query.answer()
+        await safe_answer(query)
     except BadRequest:
         return
     await send_cards_page(chat_id, user_id, context, page=page, edit_message=True, message_id=message_id)
@@ -1466,7 +1478,7 @@ async def carousel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query   = update.callback_query
     user_id = query.from_user.id
     try:
-        await query.answer()
+        await safe_answer(query)
     except BadRequest:
         return
     if user_id not in user_carousel:
@@ -1493,7 +1505,7 @@ async def club_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     club_key = query.data.replace("club_sel_", "", 1)
     try:
-        await query.answer()
+        await safe_answer(query)
     except BadRequest:
         pass
     cards, unique = get_user_club_cards(user_id, club_key)
@@ -1604,7 +1616,7 @@ async def editcard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("admineditpage_"):
         page = int(data.split("_")[1])
         await send_editcard_list(query.message.chat_id, context, page, user_id, query.message.message_id)
-        await query.answer()
+        await safe_answer(query)
         return
 
     # Выбор карточки
@@ -1621,14 +1633,14 @@ async def editcard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         name = card["name"] if card else "карточка"
         text = f"Выбрана: <b>{name}</b>\nЧто редактировать?"
         await query.edit_message_text(text, reply_markup=markup, parse_mode='HTML')
-        await query.answer()
+        await safe_answer(query)
         return
 
     # Выбор действия (очки или редкость)
     if data == "admineditstat":
         admin_edit_state[user_id]["step"] = "edit_stats"
         await query.edit_message_text("Введите новое значение для поля <b>stats</b> (например: Очки 88 или Поб 33 КН 2.22):", parse_mode='HTML')
-        await query.answer()
+        await safe_answer(query)
         return
     if data == "admineditrarity":
         admin_edit_state[user_id]["step"] = "edit_rarity"
@@ -1639,7 +1651,7 @@ async def editcard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         markup = InlineKeyboardMarkup(buttons)
         await query.edit_message_text("Выберите новую редкость:", reply_markup=markup)
-        await query.answer()
+        await safe_answer(query)
         return
 
     # Выбор редкости из списка
@@ -1647,7 +1659,7 @@ async def editcard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rarity = data.split("_")[1]
         card_id = admin_edit_state[user_id].get("card_id")
         if not card_id:
-            await query.answer("Ошибка! Карточка не выбрана.")
+            await safe_answer(query,"Ошибка! Карточка не выбрана.")
             return
         conn = get_db()
         c = conn.cursor()
@@ -1660,7 +1672,7 @@ async def editcard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         refresh_card_cache(card_id)
         await query.edit_message_text(f"✅ Редкость карточки <b>{name}</b> обновлена на: {RARITY_RU[rarity]}", parse_mode='HTML')
         admin_edit_state.pop(user_id, None)
-        await query.answer()
+        await safe_answer(query)
         return
 
 async def admin_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1682,6 +1694,10 @@ async def admin_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         refresh_card_cache(card_id)
         await update.message.reply_text(f"✅ Поле <b>stats</b> карточки <b>{name}</b> обновлено на: <code>{new_stats}</code>", parse_mode='HTML')
         admin_edit_state.pop(user_id, None)
+
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.error("Exception while handling an update:", exc_info=context.error)
 
 def main():
     setup_db()
@@ -1713,10 +1729,7 @@ def main():
     application.add_handler(CommandHandler("club", clubs))
     application.add_handler(CallbackQueryHandler(club_callback, pattern="^club_sel_"))
 
-
-
-
-
+    application.add_error_handler(error_handler)
 
     application.run_polling()
 
