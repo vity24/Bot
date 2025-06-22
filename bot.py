@@ -1402,17 +1402,13 @@ async def clubs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     totals = get_club_total_counts()
     user_cnt = get_user_club_counts(uid)
 
-    buttons, row = [], []
+    buttons = []
     for key in all_keys:
         have = user_cnt.get(key, 0)
         total = totals.get(key, 0)
-        label = f"{key} {have}/{total}"
-        row.append(InlineKeyboardButton(label, callback_data=f"club_sel_{key}"))
-        if len(row) == 2:
-            buttons.append(row)
-            row = []
-    if row:
-        buttons.append(row)
+        clean_key = key.lstrip("-—").strip()
+        label = f"{clean_key} {have}/{total}"
+        buttons.append([InlineKeyboardButton(label, callback_data=f"club_sel_{key}")])
 
     await update.message.reply_text(
         "Выбери клуб:",
