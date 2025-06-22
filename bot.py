@@ -3,6 +3,7 @@ import time
 import random
 import sqlite3
 import re
+import asyncio
 async def is_user_subscribed(bot, user_id):
     try:
         for ch in CHANNELS:
@@ -602,7 +603,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/nocooldown — снять/вернуть лимит времени\n"
             "/deletecard <имя игрока> — удалить карточку по имени\n"
             "/resetweek — обновить недельные приросты\n"
-            "/editcard — редактировать картоки (очки и редкость)"
+            "/editcard — редактировать картоки (очки и редкость)\n"
+            "/missingcards — получить недостающие карточки"
         )
     await update.message.reply_text(text)
 
@@ -1349,6 +1351,42 @@ async def send_card_page(chat_id, user_id, context, edit_message=False, message_
                 parse_mode="Markdown"
             )
 
+@require_subscribe
+async def missing_cards_for_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("⛔️ Команда доступна только админам.")
+        return
+
+    # Все карты
+    load_card_cache(force=True)
+    all_card_ids = set(CARD_CACHE.keys())
+
+    # Карты, которые уже есть у админа
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT card_id FROM inventory WHERE user_id=?", (user_id,))
+    owned_ids = {row[0] for row in c.fetchall()}
+
+    # Вычисляем недостающие
+    missing_ids = sorted(all_card_ids - owned_ids)
+
+    if not missing_ids:
+        await update.message.reply_text("✅ У тебя уже есть все карточки!")
+        conn.close()
+        return
+
+    now = int(time.time())
+    added = 0
+    for cid in missing_ids:
+        c.execute("INSERT INTO inventory (user_id, card_id, time_got) VALUES (?, ?, ?)", (user_id, cid, now))
+        added += 1
+
+    conn.commit()
+    conn.close()
+
+    await update.message.reply_text(f"✅ Добавлено {added} недостающих карточек в твою коллекцию.")
+
 def get_referral_count(user_id):
     conn = get_db()
     c = conn.cursor()
@@ -1696,6 +1734,7 @@ def main():
     application.add_handler(CommandHandler("me", me))
     application.add_handler(CommandHandler("top", top))
     application.add_handler(CommandHandler("top50", top50))
+    application.add_handler(CommandHandler("missingcards", missing_cards_for_admin))
     application.add_handler(CommandHandler("resetweek", resetweek))
     application.add_handler(CommandHandler("trade", trade))
     application.add_handler(CallbackQueryHandler(trade_callback, pattern="^trade_"))
