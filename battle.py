@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import random
 from collections import defaultdict
+from typing import List, Dict
 
 CURRENT_YEAR = 2024
 
@@ -40,27 +41,60 @@ GOAL_ACTIONS = [
     "забивает!",
     "шайба в сетке!",
     "поражает ворота!",
+    "прошивает вратаря!",
+    "оформляет гол!",
+    "мощный бросок в цель!",
 ]
 
 SAVE_ACTIONS = [
     "отражает бросок!",
     "спасает свою команду!",
     "делает шикарный сейв!",
+    "вратарь фиксирует шайбу!",
+    "потрясающий сейв!",
+    "молниеносная реакция!",
 ]
 
 MISS_ACTIONS = [
     "❌ промахивается...",
     "не попадает по воротам...",
+    "шайба проходит мимо ворот...",
+    "мимо цели.",
+    "не удалось точно бросить.",
 ]
 
 PENALTY_ACTIONS = [
     "отправляется на штрафной бокс.",
     "нарушает правила и удаляется.",
+    "удаляется за грубость.",
+    "получает 2 минуты штрафа.",
+    "отправляется отдыхать на скамейку штрафников.",
 ]
 
 INJURY_ACTIONS = [
     "получает травму и покидает матч.",
     "не может продолжить игру.",
+    "получает болезненный удар.",
+    "травмирован и уходит со льда.",
+    "врачи оказывают помощь.",
+]
+
+POST_ACTIONS = [
+    "попадает в штангу!",
+    "шайба звенит о перекладину!",
+    "только штанга спасает!",
+]
+
+BLOCK_ACTIONS = [
+    "блокирует бросок!",
+    "отважно ставит клюшку под шайбу!",
+    "перекрывает бросок соперника!",
+]
+
+FIGHT_ACTIONS = [
+    "вступает в драку!",
+    "устраивает потасовку на льду!",
+    "бросает перчатки и дерётся!",
 ]
 
 
@@ -133,6 +167,10 @@ class BattleSession:
     def _goalie(self, team: List[Dict]) -> Dict:
         goalies = [p for p in team if p.get("pos") == "G" and not p["injured"]]
         return goalies[0] if goalies else random.choice(team)
+
+    def _defender(self, team: List[Dict]) -> Dict:
+        defenders = [p for p in team if not p["injured"] and p.get("pos") != "G"]
+        return random.choice(defenders) if defenders else self._goalie(team)
 
     def _pos_icon(self, player: Dict) -> str:
         pos = (player.get("pos") or "").upper()
@@ -218,6 +256,8 @@ class BattleSession:
                     self._log_action(1, attacker_team1, random.choice(INJURY_ACTIONS))
                 elif attacker_team1["strength"] < 25 and random.random() < 0.1 * penalty1:
                     self._log_action(1, attacker_team1, random.choice(PENALTY_ACTIONS))
+                elif random.random() < 0.01:
+                    self._log_action(1, attacker_team1, random.choice(FIGHT_ACTIONS))
                 else:
                     if self._attempt_goal(attacker_team1, goalie_team2, attack_mod1, defense_mod2):
                         self.score["team1"] += 1
@@ -225,7 +265,13 @@ class BattleSession:
                         self._log_action(1, attacker_team1, random.choice(GOAL_ACTIONS))
                     else:
                         self.contribution[goalie_team2["name"]] += 1
-                        if random.random() < 0.3:
+                        r = random.random()
+                        if r < 0.1:
+                            self._log_action(1, attacker_team1, random.choice(POST_ACTIONS))
+                        elif r < 0.35:
+                            defender = self._defender(self.team2)
+                            self._log_action(2, defender, random.choice(BLOCK_ACTIONS))
+                        elif r < 0.55:
                             self._log_action(1, attacker_team1, random.choice(MISS_ACTIONS))
                         else:
                             self._log_action(2, goalie_team2, random.choice(SAVE_ACTIONS))
@@ -237,6 +283,8 @@ class BattleSession:
                     self._log_action(2, attacker_team2, random.choice(INJURY_ACTIONS))
                 elif attacker_team2["strength"] < 25 and random.random() < 0.1 * penalty2:
                     self._log_action(2, attacker_team2, random.choice(PENALTY_ACTIONS))
+                elif random.random() < 0.01:
+                    self._log_action(2, attacker_team2, random.choice(FIGHT_ACTIONS))
                 else:
                     if self._attempt_goal(attacker_team2, goalie_team1, attack_mod2, defense_mod1):
                         self.score["team2"] += 1
@@ -244,7 +292,13 @@ class BattleSession:
                         self._log_action(2, attacker_team2, random.choice(GOAL_ACTIONS))
                     else:
                         self.contribution[goalie_team1["name"]] += 1
-                        if random.random() < 0.3:
+                        r = random.random()
+                        if r < 0.1:
+                            self._log_action(2, attacker_team2, random.choice(POST_ACTIONS))
+                        elif r < 0.35:
+                            defender = self._defender(self.team1)
+                            self._log_action(1, defender, random.choice(BLOCK_ACTIONS))
+                        elif r < 0.55:
                             self._log_action(2, attacker_team2, random.choice(MISS_ACTIONS))
                         else:
                             self._log_action(1, goalie_team1, random.choice(SAVE_ACTIONS))
