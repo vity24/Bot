@@ -1675,9 +1675,27 @@ async def admin_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(f"✅ Поле <b>stats</b> карточки <b>{name}</b> обновлено на: <code>{new_stats}</code>", parse_mode='HTML')
         admin_edit_state.pop(user_id, None)
 
+TEMP_DICTS = [
+    pending_trades,
+    trade_confirmations,
+    user_carousel,
+    user_cards_pagination,
+    admin_edit_state,
+]
+
+async def cleanup_expired(context: ContextTypes.DEFAULT_TYPE):
+    now = time.time()
+    TTL = 24 * 3600
+    for d in TEMP_DICTS:
+        for k in list(d.keys()):
+            created = d[k].get("created", now)
+            if now - created > TTL:
+                d.pop(k, None)
+
 async def main():
     setup_db()
     application = Application.builder().token(TOKEN).build()
+    application.job_queue.run_repeating(cleanup_expired, interval=3600)
 
     bot_commands = [
         BotCommand("start", "Приветствие и справка"),
