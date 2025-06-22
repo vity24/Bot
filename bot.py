@@ -46,6 +46,9 @@ from telegram import (
 )
 from collections import Counter
 from functools import wraps
+import handlers
+import db
+
 async def check_subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
@@ -1722,6 +1725,9 @@ async def post_init(application: Application):
         BotCommand("trade", "Обмен картами по ID"),
         BotCommand("top", "ТОП-10 игроков"),
         BotCommand("top50", "ТОП-50 игроков"),
+        BotCommand("fight", "Бой с ботом"),
+        BotCommand("duel", "Дуэль с игроком"),
+        BotCommand("history", "История боёв"),
         BotCommand("invite", "Пригласи друга и получи ачивки!"),
         BotCommand("topref", "ТОП по приглашениям"),
         BotCommand("clubs", "Карточки по клубам"),
@@ -1730,6 +1736,7 @@ async def post_init(application: Application):
 
 def main():
     setup_db()
+    db.setup_battle_db()
     application = (
         Application.builder()
         .token(TOKEN)
@@ -1763,6 +1770,11 @@ def main():
     application.add_handler(CommandHandler("topref", topref))
     application.add_handler(CommandHandler("clubs", clubs))
     application.add_handler(CommandHandler("club", clubs))
+    application.add_handler(CommandHandler("fight", handlers.start_fight))
+    application.add_handler(CommandHandler("duel", handlers.start_duel))
+    application.add_handler(CommandHandler("history", handlers.show_battle_history))
+    application.add_handler(CallbackQueryHandler(handlers.tactic_callback, pattern="^tactic_"))
+    application.add_handler(CallbackQueryHandler(handlers.log_callback, pattern="^log_(prev|next)$"))
     application.add_handler(CallbackQueryHandler(club_callback, pattern="^club_sel_"))
 
 
