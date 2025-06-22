@@ -60,3 +60,44 @@ def get_battle_history(user_id, limit=5):
     rows = cur.fetchall()
     conn.close()
     return rows
+
+
+def setup_team_db():
+    conn = get_db()
+    conn.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS teams (
+            user_id INTEGER PRIMARY KEY,
+            name TEXT,
+            lineup TEXT,
+            bench TEXT
+        )
+        '''
+    )
+    conn.commit()
+    conn.close()
+
+
+def save_team(user_id, name, lineup, bench):
+    conn = get_db()
+    conn.execute(
+        "REPLACE INTO teams (user_id, name, lineup, bench) VALUES (?, ?, ?, ?)",
+        (user_id, name, json.dumps(lineup), json.dumps(bench)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_team(user_id):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT name, lineup, bench FROM teams WHERE user_id=?", (user_id,))
+    row = cur.fetchone()
+    conn.close()
+    if row:
+        return {
+            "name": row[0],
+            "lineup": json.loads(row[1] or "[]"),
+            "bench": json.loads(row[2] or "[]"),
+        }
+    return None
