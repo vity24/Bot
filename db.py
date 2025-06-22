@@ -151,3 +151,55 @@ def get_team(user_id):
             "bench": json.loads(row[2] or "[]"),
         }
     return None
+
+
+def get_xp_level(uid: int):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT xp, level FROM users WHERE id=?", (uid,))
+    row = cur.fetchone()
+    conn.close()
+    if row:
+        return row[0], row[1]
+    return 0, 1
+
+
+def update_xp(uid: int, xp: int, level: int, delta: int):
+    conn = get_db()
+    conn.execute(
+        "UPDATE users SET xp=?, level=?, xp_daily = xp_daily + ?, last_xp_reset=last_xp_reset WHERE id=?",
+        (xp, level, delta, uid),
+    )
+    conn.commit()
+    conn.close()
+
+
+def reset_daily_xp():
+    conn = get_db()
+    conn.execute(
+        "UPDATE users SET xp_daily=0, last_xp_reset=DATE('now') WHERE last_xp_reset < DATE('now')"
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_win_streak(uid: int) -> int:
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT win_streak FROM users WHERE id=?", (uid,))
+        row = cur.fetchone()
+    except sqlite3.OperationalError:
+        row = None
+    conn.close()
+    return row[0] if row else 0
+
+
+def update_win_streak(uid: int, won: bool):
+    streak = get_win_streak(uid)
+    streak = streak + 1 if won else 0
+    conn = get_db()
+    conn.execute("UPDATE users SET win_streak=? WHERE id=?", (streak, uid))
+    conn.commit()
+    conn.close()
+    return streak
