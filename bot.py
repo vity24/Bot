@@ -410,6 +410,19 @@ def parse_points(stats, pos):
         m = re.search(r'Очки\s+(\d+)', stats or "")
         return int(m.group(1)) if m else 0
 
+def extract_points(stats: str | None) -> str:
+    """Return points value from stats for field players as string."""
+    m = re.search(r"Очки\s+(\d+)", stats or "")
+    return m.group(1) if m else "0"
+
+def extract_goalie_stats(stats: str | None) -> tuple[str, str]:
+    """Return wins and GAA (КН) from goalie stats as strings."""
+    m_win = re.search(r"Поб\s+(\d+)", stats or "")
+    wins = m_win.group(1) if m_win else "0"
+    m_kn = re.search(r"КН\s*([\d.,]+)", stats or "")
+    kn = m_kn.group(1) if m_kn else "0"
+    return wins, kn
+
 def _calculate_user_score_sync(user_id):
     conn = get_db()
     c = conn.cursor()
@@ -1354,21 +1367,34 @@ async def send_card_page(chat_id, context, cards, index=0, *, user_id=None, edit
         return
     index = max(0, min(index, len(cards) - 1))
     card = cards[index]
-    pos_ru = pos_to_rus(card.get("pos") or "")
+    pos = card.get("pos") or ""
+    pos_ru = pos_to_rus(pos)
     flag = flag_from_iso3(card.get("country"))
     iso = (card.get("country") or "").upper()
     club = (card.get("team_ru") or card.get("team_en") or "—").strip()
+    rarity = card.get("rarity", "common")
+    rarity_ru = RARITY_RU_SHORT.get(rarity, rarity)
+    rarity_emoji = RARITY_EMOJI.get(rarity, "")
+
     caption_parts = [
         f"*{card.get('name','?')}*",
+        f"_{rarity_emoji} {rarity_ru} карта_",
+        "",
         f"*Клуб:* {club}",
-        f"_Позиция:_ {pos_ru}",
-        f"*Страна:* {flag} `{iso}`",
-        f"*Редкость:* {RARITY_RU.get(card.get('rarity','common'), card.get('rarity','common'))}",
+        f"*Амплуа:* {'Вратарь' if pos == 'G' else pos_ru}",
+        f"*Страна:* {flag} {iso}",
+        "",
     ]
-    if card.get("count", 1) > 1:
-        caption_parts.append(f"*Кол-во:* x{card['count']}")
+
+    stats = card.get("stats", "")
+    if pos == "G":
+        wins, kn = extract_goalie_stats(stats)
+        caption_parts.append(f"📊 *Победы:* {wins}")
+        caption_parts.append(f"*КН:* {kn}")
+    else:
+        pts = extract_points(stats)
+        caption_parts.append(f"📊 *Очки:* {pts}")
     caption_parts.append("────────────")
-    caption_parts.append(wrap_line(card.get("stats", "")))
     # progress info
     state = context.user_data.get("coll", {})
     if state.get("rarity"):
@@ -1385,8 +1411,8 @@ async def send_card_page(chat_id, context, cards, index=0, *, user_id=None, edit
         filter_name = "Все"
     caption_parts.append(f"[{index+1} из {len(cards)} | Фильтр: {filter_name}]")
     if user_id:
-        uniq, total = get_inventory_counts(user_id)
-        caption_parts.append(f"Всего у тебя: {total} карт (уникальных: {uniq})")
+        _, total = get_inventory_counts(user_id)
+        caption_parts.append(f"📦 Всего: {total} карт")
     caption = "\n".join(filter(None, caption_parts))
 
     nav = []
@@ -1486,7 +1512,12 @@ async def send_collection_page(
         nav.append(InlineKeyboardButton("◀️ Назад", callback_data="coll_prev"))
     if page < total_pages - 1:
         nav.append(InlineKeyboardButton("Вперёд ▶️", callback_data="coll_next"))
-    markup = InlineKeyboardMarkup([nav]) if nav else None
+
+    rows = []
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton("🔙 В коллекцию", callback_data="coll_back")])
+    markup = InlineKeyboardMarkup(rows)
 
     title = "📦 Все карточки"
     if rarity:
