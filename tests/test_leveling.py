@@ -50,3 +50,34 @@ def test_level_up_triggers_reward(monkeypatch):
     import asyncio
     asyncio.run(handlers.apply_xp(user_id, res, True, ctx))
     assert called.get('lvl') is not None
+
+
+def test_grant_level_reward_adds_cards(monkeypatch):
+    import db, types, asyncio, random, pytest
+    try:
+        import handlers
+    except ModuleNotFoundError:
+        pytest.skip("telegram not available")
+
+    conn = db.get_db()
+    c = conn.cursor()
+    c.execute("INSERT OR REPLACE INTO users (id, username) VALUES (?, ?)", (2, 't'))
+    c.execute("DELETE FROM inventory WHERE user_id=2")
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(random, 'randint', lambda a, b: 2)
+
+    async def fake_card():
+        return {'id': 999, 'name': 'X', 'rarity': 'common'}
+
+    monkeypatch.setattr(handlers, 'get_random_card', fake_card)
+    ctx = types.SimpleNamespace(bot=types.SimpleNamespace(send_message=lambda *a, **kw: None))
+    asyncio.run(handlers.grant_level_reward(2, 2, ctx))
+
+    conn = db.get_db()
+    c = conn.cursor()
+    c.execute('SELECT COUNT(*) FROM inventory WHERE user_id=2 AND card_id=999')
+    count = c.fetchone()[0]
+    conn.close()
+    assert count == 2
