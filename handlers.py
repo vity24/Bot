@@ -12,8 +12,29 @@ level_up_msg = "🆙 *Новый уровень!*  Ты достиг Lv {lvl}.\n
 
 
 async def grant_level_reward(uid: int, lvl: int, context: ContextTypes.DEFAULT_TYPE):
-    reward = "пак карт"
-    await context.bot.send_message(uid, level_up_msg.format(lvl=lvl, reward=reward), parse_mode="Markdown")
+    conn = db.get_db()
+    cur = conn.cursor()
+    cards = []
+    count = random.randint(1, 3)
+    for _ in range(count):
+        card = await get_random_card()
+        if not card:
+            continue
+        cur.execute(
+            "INSERT INTO inventory (user_id, card_id, time_got) VALUES (?, ?, strftime('%s','now'))",
+            (uid, card["id"]),
+        )
+        cards.append(card)
+    conn.commit()
+    conn.close()
+
+    reward_lines = [f"{RARITY_EMOJI.get(c.get('rarity','common'), '')} {c['name']}" for c in cards]
+    reward_text = "\n".join(reward_lines) if reward_lines else "карты не выданы"
+    await context.bot.send_message(
+        uid,
+        level_up_msg.format(lvl=lvl, reward=reward_text),
+        parse_mode="Markdown",
+    )
 
 
 async def apply_xp(uid: int, result: dict, opponent_is_bot: bool, context: ContextTypes.DEFAULT_TYPE):
@@ -171,8 +192,14 @@ async def create_team(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if db.get_team(user_id):
         await show_my_team(update, context)
         return
-    context.user_data["team_build"] = {"step": "name"}
-    await update.message.reply_text("Введите название команды (3-8 символов):")
+    buttons = [
+        [InlineKeyboardButton("🆕 Создать команду", callback_data="team_create")],
+        [InlineKeyboardButton("📋 Назад", callback_data="team_cancel")],
+    ]
+    markup = InlineKeyboardMarkup(buttons)
+    await update.message.reply_text(
+        "У тебя ещё нет команды.", reply_markup=markup
+    )
 
 
 async def team_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -184,6 +211,9 @@ async def team_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not (3 <= len(name) <= 8):
             await update.message.reply_text("Название должно быть от 3 до 8 символов, попробуйте снова:")
             return
+        if db.team_name_taken(name, update.effective_user.id):
+            await update.message.reply_text("Такое имя уже используется. Попробуйте другое.")
+            return
         tb["name"] = name
         tb["step"] = "select"
         tb["selected"] = []
@@ -194,6 +224,9 @@ async def team_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         name = update.message.text.strip()[:30]
         if not (3 <= len(name) <= 8):
             await update.message.reply_text("Название должно быть от 3 до 8 символов, попробуйте снова:")
+            return
+        if db.team_name_taken(name, update.effective_user.id):
+            await update.message.reply_text("Такое имя уже используется. Попробуйте другое.")
             return
         team = db.get_team(update.effective_user.id)
         if team:
@@ -261,6 +294,14 @@ async def team_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "team_rename":
         context.user_data["team_build"] = {"step": "rename"}
         await query.edit_message_text("Введите новое название команды (3-8 символов):")
+        return
+    if data == "team_create":
+        context.user_data["team_build"] = {"step": "name"}
+        await query.edit_message_text("Введите название команды (3-8 символов):")
+        return
+    if data == "team_cancel":
+        context.user_data.pop("team_build", None)
+        await query.message.delete()
         return
     if not tb:
         return
@@ -393,7 +434,10 @@ def _format_log_page(user_data):
 
 
 async def _start_log_view(user_id: int, result: dict, context: ContextTypes.DEFAULT_TYPE):
-    ud = context.application.user_data[user_id]
+    ud = context.application.user_data.setdefault(user_id, {})
+    ud.pop("log", None)
+    ud.pop("log_page", None)
+    ud.pop("score", None)
     ud["log"] = result.get("log", [])
     ud["score"] = result.get("score", {"team1": 0, "team2": 0})
     ud["log_page"] = 0
@@ -406,15 +450,25 @@ async def tactic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tactic = TACTICS.get(query.data, "balanced")
     mode = context.user_data.get("fight_mode", "pve")
     user_id = query.from_user.id
+    # clear previous logs
+    ud = context.application.user_data.setdefault(user_id, {})
+    ud.pop("log", None)
+    ud.pop("log_page", None)
+    ud.pop("score", None)
     team_data = db.get_team(user_id)
     team_name = team_data["name"] if team_data else "Team1"
     team = await _build_team(user_id, team_data["lineup"] if team_data else None)
     if mode == "pvp":
+        existing = PVP_QUEUE.get(user_id)
+        if existing and existing.get("reserved"):
+            await query.edit_message_text("Ожидание соперника...")
+            return
         entry = {
             "team": team,
             "tactic": tactic,
             "name": team_name,
             "username": query.from_user.username or str(user_id),
+            "reserved": True,
         }
         PVP_QUEUE[user_id] = entry
         opponents = [(uid, data) for uid, data in PVP_QUEUE.items() if uid != user_id]
