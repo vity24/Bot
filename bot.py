@@ -1630,10 +1630,15 @@ async def collection_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     nav = context.user_data.setdefault("coll_nav", ["collection"])
 
     async def show_state(state):
+        async def send_or_edit(text: str, markup: InlineKeyboardMarkup):
+            if query.message and query.message.photo:
+                await query.message.delete()
+                await context.bot.send_message(query.message.chat_id, text, reply_markup=markup)
+            else:
+                await query.edit_message_text(text, reply_markup=markup)
+
         if state == "collection":
-            await query.edit_message_text(
-                "📂 Управление коллекцией:", reply_markup=_collection_root_markup()
-            )
+            await send_or_edit("📂 Управление коллекцией:", _collection_root_markup())
             return
         if state == "rarity_select":
             buttons = [
@@ -1641,7 +1646,7 @@ async def collection_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 for r in ["legendary", "mythic", "epic", "rare", "common"]
             ]
             buttons.append([InlineKeyboardButton("◀️ Назад", callback_data="coll_back")])
-            await query.edit_message_text("Выбери редкость:", reply_markup=InlineKeyboardMarkup(buttons))
+            await send_or_edit("Выбери редкость:", InlineKeyboardMarkup(buttons))
             return
         if state.startswith("rarity_"):
             rarity = state.split("_", 1)[1]
@@ -1651,7 +1656,11 @@ async def collection_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
         if state.startswith("clubpage_"):
             page = int(state.split("_")[1])
-            await send_club_list_page(query.message.chat_id, context, uid, page=page, edit=True, message_id=query.message.message_id)
+            if query.message and query.message.photo:
+                await query.message.delete()
+                await send_club_list_page(query.message.chat_id, context, uid, page=page)
+            else:
+                await send_club_list_page(query.message.chat_id, context, uid, page=page, edit=True, message_id=query.message.message_id)
             return
         if state.startswith("club_"):
             club = state[5:]
