@@ -1331,6 +1331,19 @@ async def send_card_page(chat_id, context, cards, index=0, *, edit=False, messag
         caption_parts.append(f"*Кол-во:* x{card['count']}")
     caption_parts.append("────────────")
     caption_parts.append(wrap_line(card.get("stats", "")))
+    # progress info
+    state = context.user_data.get("coll", {})
+    if state.get("rarity"):
+        filter_name = f"{RARITY_RU.get(state['rarity'], state['rarity'])}"
+    elif state.get("club"):
+        filter_name = state["club"]
+    elif state.get("duplicates"):
+        filter_name = "Повторки"
+    elif state.get("new_only"):
+        filter_name = "Новые"
+    else:
+        filter_name = "Все"
+    caption_parts.append(f"[{index+1} из {len(cards)} | Фильтр: {filter_name}]")
     caption = "\n".join(filter(None, caption_parts))
 
     nav = []
@@ -1338,7 +1351,11 @@ async def send_card_page(chat_id, context, cards, index=0, *, edit=False, messag
         nav.append(InlineKeyboardButton("⬅️", callback_data="coll_prev"))
     if index < len(cards) - 1:
         nav.append(InlineKeyboardButton("➡️", callback_data="coll_next"))
-    markup = InlineKeyboardMarkup([nav]) if nav else None
+    rows = []
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton("🔙 Назад в коллекцию", callback_data="coll_back")])
+    markup = InlineKeyboardMarkup(rows)
 
     try:
         if edit and message_id:
@@ -1527,8 +1544,14 @@ async def collection_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if data == "coll_back":
         context.user_data.pop("coll", None)
-        await query.edit_message_text(
-            "📂 Управление коллекцией:", reply_markup=_collection_root_markup()
+        try:
+            await query.message.delete()
+        except BadRequest:
+            pass
+        await context.bot.send_message(
+            query.message.chat_id,
+            "📂 Управление коллекцией:",
+            reply_markup=_collection_root_markup(),
         )
         return
 
