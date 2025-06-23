@@ -42,6 +42,7 @@ from telegram import (
     InlineKeyboardMarkup,
     BotCommand,
     Update,
+    InputMediaPhoto,
 )
 from collections import Counter
 from functools import wraps
@@ -105,6 +106,14 @@ RARITY_ORDER = {
     "epic": 2,
     "rare": 3,
     "common": 4
+}
+
+RARITY_EMOJI = {
+    "legendary": "⭐️",
+    "mythic": "🟥",
+    "epic": "💎",
+    "rare": "🔵",
+    "common": "🟢",
 }
 
 RARITY_WEIGHTS = {
@@ -1284,6 +1293,81 @@ def fetch_user_cards(user_id, rarity=None, club=None, new_only=False):
     conn.close()
     return rows
 
+def build_filtered_cards(user_id, *, rarity=None, club=None, new_only=False, duplicates=False):
+    """Return a sorted list of card dicts with count."""
+    rows = fetch_user_cards(user_id, rarity=rarity, club=club, new_only=new_only)
+    if duplicates:
+        rows = [r for r in rows if r[3] > 1]
+    cards = []
+    for cid, name, rar, cnt in rows:
+        card = get_card_from_cache(cid)
+        if not card:
+            continue
+        cpy = card.copy()
+        cpy["count"] = cnt
+        cards.append(cpy)
+    cards.sort(key=lambda c: (RARITY_ORDER.get(c.get("rarity", "common"), 99), c.get("name", "")))
+    return cards
+
+async def send_card_page(chat_id, context, cards, index=0, *, edit=False, message_id=None):
+    """Send or edit a single card with navigation buttons."""
+    if not cards:
+        await context.bot.send_message(chat_id, "У тебя нет карточек.")
+        return
+    index = max(0, min(index, len(cards) - 1))
+    card = cards[index]
+    pos_ru = pos_to_rus(card.get("pos") or "")
+    flag = flag_from_iso3(card.get("country"))
+    iso = (card.get("country") or "").upper()
+    club = (card.get("team_ru") or card.get("team_en") or "—").strip()
+    caption_parts = [
+        f"*{card.get('name','?')}*",
+        f"*Клуб:* {club}",
+        f"_Позиция:_ {pos_ru}",
+        f"*Страна:* {flag} `{iso}`",
+        f"*Редкость:* {RARITY_RU.get(card.get('rarity','common'), card.get('rarity','common'))}",
+    ]
+    if card.get("count", 1) > 1:
+        caption_parts.append(f"*Кол-во:* x{card['count']}")
+    caption_parts.append("────────────")
+    caption_parts.append(wrap_line(card.get("stats", "")))
+    caption = "\n".join(filter(None, caption_parts))
+
+    nav = []
+    if index > 0:
+        nav.append(InlineKeyboardButton("⬅️", callback_data="coll_prev"))
+    if index < len(cards) - 1:
+        nav.append(InlineKeyboardButton("➡️", callback_data="coll_next"))
+    markup = InlineKeyboardMarkup([nav]) if nav else None
+
+    try:
+        if edit and message_id:
+            await context.bot.edit_message_media(
+                chat_id=chat_id,
+                message_id=message_id,
+                media=InputMediaPhoto(card.get("img", ""), caption=caption, parse_mode="Markdown"),
+                reply_markup=markup,
+            )
+        else:
+            await context.bot.send_photo(
+                chat_id,
+                card.get("img", ""),
+                caption=caption,
+                parse_mode="Markdown",
+                reply_markup=markup,
+            )
+    except BadRequest:
+        if edit and message_id:
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=caption,
+                reply_markup=markup,
+                parse_mode="Markdown",
+            )
+        else:
+            await context.bot.send_message(chat_id, caption, reply_markup=markup, parse_mode="Markdown")
+
 async def send_collection_page(
     chat_id,
     user_id,
@@ -1459,14 +1543,19 @@ async def collection_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if data.startswith("coll_rarity_"):
         rarity = data.split("_", 2)[2]
-        context.user_data["coll"] = {"rarity": rarity, "page": 0}
-        await send_collection_page(
+        cards = build_filtered_cards(uid, rarity=rarity)
+        context.user_data["coll"] = {
+            "rarity": rarity,
+            "mode": "carousel",
+            "index": 0,
+            "cards": cards,
+        }
+        await send_card_page(
             query.message.chat_id,
-            uid,
             context,
-            page=0,
-            rarity=rarity,
-            edit_message=True,
+            cards,
+            index=0,
+            edit=True,
             message_id=query.message.message_id,
         )
         return
@@ -1487,46 +1576,61 @@ async def collection_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if data.startswith("coll_club_"):
         club = data.replace("coll_club_", "", 1)
-        context.user_data["coll"] = {"club": club, "page": 0}
-        await send_collection_page(
+        cards = build_filtered_cards(uid, club=club)
+        context.user_data["coll"] = {
+            "club": club,
+            "mode": "carousel",
+            "index": 0,
+            "cards": cards,
+        }
+        await send_card_page(
             query.message.chat_id,
-            uid,
             context,
-            page=0,
-            club=club,
-            edit_message=True,
+            cards,
+            index=0,
+            edit=True,
             message_id=query.message.message_id,
         )
         return
 
     if data == "coll_filter_dupes":
-        context.user_data["coll"] = {"duplicates": True, "page": 0}
-        await send_collection_page(
+        cards = build_filtered_cards(uid, duplicates=True)
+        context.user_data["coll"] = {
+            "duplicates": True,
+            "mode": "carousel",
+            "index": 0,
+            "cards": cards,
+        }
+        await send_card_page(
             query.message.chat_id,
-            uid,
             context,
-            page=0,
-            duplicates=True,
-            edit_message=True,
+            cards,
+            index=0,
+            edit=True,
             message_id=query.message.message_id,
         )
         return
 
     if data == "coll_filter_new":
-        context.user_data["coll"] = {"new_only": True, "page": 0}
-        await send_collection_page(
+        cards = build_filtered_cards(uid, new_only=True)
+        context.user_data["coll"] = {
+            "new_only": True,
+            "mode": "carousel",
+            "index": 0,
+            "cards": cards,
+        }
+        await send_card_page(
             query.message.chat_id,
-            uid,
             context,
-            page=0,
-            new_only=True,
-            edit_message=True,
+            cards,
+            index=0,
+            edit=True,
             message_id=query.message.message_id,
         )
         return
 
     if data == "coll_all":
-        context.user_data["coll"] = {"page": 0}
+        context.user_data["coll"] = {"page": 0, "mode": "list"}
         await send_collection_page(
             query.message.chat_id,
             uid,
@@ -1539,25 +1643,44 @@ async def collection_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if data in {"coll_next", "coll_prev"}:
         state = context.user_data.get("coll", {})
-        page = state.get("page", 0)
-        if data == "coll_next":
-            page += 1
+        if state.get("mode") == "carousel":
+            idx = state.get("index", 0)
+            if data == "coll_next":
+                idx += 1
+            else:
+                idx = max(0, idx - 1)
+            cards = state.get("cards", [])
+            idx = max(0, min(idx, len(cards) - 1))
+            state["index"] = idx
+            context.user_data["coll"] = state
+            await send_card_page(
+                query.message.chat_id,
+                context,
+                cards,
+                index=idx,
+                edit=True,
+                message_id=query.message.message_id,
+            )
         else:
-            page = max(0, page - 1)
-        state["page"] = page
-        context.user_data["coll"] = state
-        await send_collection_page(
-            query.message.chat_id,
-            uid,
-            context,
-            page=page,
-            rarity=state.get("rarity"),
-            club=state.get("club"),
-            new_only=state.get("new_only", False),
-            duplicates=state.get("duplicates", False),
-            edit_message=True,
-            message_id=query.message.message_id,
-        )
+            page = state.get("page", 0)
+            if data == "coll_next":
+                page += 1
+            else:
+                page = max(0, page - 1)
+            state["page"] = page
+            context.user_data["coll"] = state
+            await send_collection_page(
+                query.message.chat_id,
+                uid,
+                context,
+                page=page,
+                rarity=state.get("rarity"),
+                club=state.get("club"),
+                new_only=state.get("new_only", False),
+                duplicates=state.get("duplicates", False),
+                edit_message=True,
+                message_id=query.message.message_id,
+            )
         return
 
 
