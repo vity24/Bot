@@ -8,7 +8,7 @@ from battle import BattleSession
 import db
 from helpers.leveling import level_from_xp, xp_to_next, calc_battle_xp
 
-level_up_msg = "\ud83c\udd99 *Новый уровень!*  Ты достиг Lv {lvl}.\n\ud83c\udf81 Твой приз: {reward}"
+level_up_msg = "🆙 *Новый уровень!*  Ты достиг Lv {lvl}.\n🎁 Твой приз: {reward}"
 
 
 async def grant_level_reward(uid: int, lvl: int, context: ContextTypes.DEFAULT_TYPE):
