@@ -4,6 +4,7 @@ import asyncio
 import re
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
+from telegram.error import BadRequest
 from battle import BattleSession
 import db
 from helpers.leveling import level_from_xp, xp_to_next, calc_battle_xp
@@ -511,9 +512,13 @@ async def tactic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_log_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ud = BATTLE_LOGS.get(update.effective_user.id, {})
     text, markup = _format_log_page(ud)
-    await update.callback_query.edit_message_text(
-        text or "Нет логов", reply_markup=markup, parse_mode="HTML"
-    )
+    try:
+        await update.callback_query.edit_message_text(
+            text or "Нет логов", reply_markup=markup, parse_mode="HTML"
+        )
+    except BadRequest:
+        # Message was probably deleted by user
+        pass
 
 async def log_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -524,7 +529,11 @@ async def log_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ud["log_page"] = ud.get("log_page", 0) + 1
     elif query.data == "log_close":
         BATTLE_LOGS.pop(update.effective_user.id, None)
-        await query.message.delete()
+        try:
+            await query.message.delete()
+        except BadRequest:
+            # Ignore if message already deleted
+            pass
         return
     await show_log_page(update, context)
 
