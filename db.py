@@ -170,6 +170,18 @@ def get_team(user_id):
     return None
 
 
+def team_name_taken(name: str, exclude_user_id: int) -> bool:
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT user_id FROM teams WHERE name=? AND user_id != ?",
+        (name, exclude_user_id),
+    )
+    row = cur.fetchone()
+    conn.close()
+    return row is not None
+
+
 def get_xp_level(uid: int):
     conn = get_db()
     cur = conn.cursor()
