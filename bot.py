@@ -40,7 +40,6 @@ from telegram.error import BadRequest
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    InputMediaPhoto,
     BotCommand,
     Update,
 )
@@ -199,10 +198,6 @@ ISO3_TO_FLAG = {
 }
 
 admin_no_cooldown = set()
-user_carousel = {}
-
-# --- Новое для листалки mycards
-user_cards_pagination = {}
 CARDS_PER_PAGE = 50
 
 # --- Для обменов ---
@@ -642,8 +637,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "Добро пожаловать в коллекционный бот NHL!\n"
         "/card — получить карточку\n"
-        "/mycards — твоя коллекция (листай кнопками)\n"
-        "/mycards2 — коллекция с листанием по одной\n"
+        "/collection — управление коллекцией\n"
         "/me — твой рейтинг и прогресс\n"
         "/top — топ-10 игроков\n"
         "/top50 — топ-50 игроков\n"
@@ -651,7 +645,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/trade <user_id> — обмен картами по Telegram ID\n"
         "/invite — пригласи друга и получи ачивки!\n"
         "/topref — топ по приглашениям\n"
-        "/clubs — карточки по клубам\n"
         "/team — создание своей команды из карточек\n"
         "/fight — бой с ботом\n"
         "/duel — дуэль с другим игроком\n"
@@ -1267,68 +1260,95 @@ def get_user_club_cards(user_id, club_key):
         cards.append(card_copy)
     return cards, sum(count_dict.values())
 
-async def send_cards_page(chat_id, user_id, context, page=0, edit_message=False, message_id=None):
-    # Получаем все карточки пользователя
+def fetch_user_cards(user_id, rarity=None, club=None, new_only=False):
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT card_id FROM inventory WHERE user_id=?", (user_id,))
-    card_ids = [r[0] for r in c.fetchall()]
+    query = (
+        "SELECT cards.id, cards.name, cards.rarity, COUNT(*) as cnt "
+        "FROM inventory JOIN cards ON inventory.card_id = cards.id "
+        "WHERE inventory.user_id=?"
+    )
+    params = [user_id]
+    if rarity:
+        query += " AND cards.rarity=?"
+        params.append(rarity)
+    if club:
+        query += " AND COALESCE(cards.team_en, cards.team_ru)=?"
+        params.append(club)
+    if new_only:
+        query += " AND inventory.time_got >= ?"
+        params.append(int(time.time()) - 86400)
+    query += " GROUP BY cards.id, cards.name, cards.rarity"
+    c.execute(query, params)
+    rows = c.fetchall()
     conn.close()
+    return rows
 
-    count_dict = Counter(card_ids)
+async def send_collection_page(
+    chat_id,
+    user_id,
+    context,
+    page=0,
+    *,
+    rarity=None,
+    club=None,
+    new_only=False,
+    duplicates=False,
+    edit_message=False,
+    message_id=None,
+):
+    rows = fetch_user_cards(user_id, rarity=rarity, club=club, new_only=new_only)
+    if duplicates:
+        rows = [r for r in rows if r[3] > 1]
 
-    if not card_ids:
+    card_info = []
+    for cid, name, rar, cnt in rows:
+        idx = RARITY_ORDER.get(rar, 99)
+        card_info.append((idx, name, cid, cnt, rar))
+
+    if not card_info:
         await context.bot.send_message(chat_id, "У тебя нет карточек.")
         return
 
-    # Получаем инфу о каждой карточке для сортировки
-    card_info = []
-    for card_id, count in count_dict.items():
-        card = get_card_from_cache(card_id)
-        if not card:
-            continue
-        name = card["name"]
-        rarity = card["rarity"]
-        rarity_index = RARITY_ORDER.get(rarity, 99)
-        card_info.append((rarity_index, name, card_id, count, rarity))
-
-    # Сортируем: сначала по редкости, потом по имени
     card_info.sort(key=lambda x: (x[0], x[1]))
-
-    # Постранично по 50
     start = page * CARDS_PER_PAGE
     end = start + CARDS_PER_PAGE
     page_cards = card_info[start:end]
-
     if not page_cards:
         await context.bot.send_message(chat_id, "На этой странице нет карточек.")
         return
 
-    # Готовим текст
     lines = []
-    for _, name, card_id, count, rarity in page_cards:
-        rar_ru = RARITY_RU.get(rarity, rarity)
+    for _, name, cid, count, rar in page_cards:
+        rar_ru = RARITY_RU.get(rar, rar)
         line = f"{name} ({rar_ru})"
         if count > 1:
             line += f" x{count}"
         lines.append(line)
 
-    # Навигация
     total_cards = len(card_info)
     total_pages = (total_cards + CARDS_PER_PAGE - 1) // CARDS_PER_PAGE
 
-    nav_buttons = []
+    nav = []
     if page > 0:
-        nav_buttons.append(InlineKeyboardButton("◀️ Назад", callback_data="mycards_prev"))
+        nav.append(InlineKeyboardButton("◀️ Назад", callback_data="coll_prev"))
     if page < total_pages - 1:
-        nav_buttons.append(InlineKeyboardButton("Вперёд ▶️", callback_data="mycards_next"))
+        nav.append(InlineKeyboardButton("Вперёд ▶️", callback_data="coll_next"))
+    markup = InlineKeyboardMarkup([nav]) if nav else None
 
-    markup = InlineKeyboardMarkup([nav_buttons]) if nav_buttons else None
+    title = "📦 Все карточки"
+    if rarity:
+        title = f"{RARITY_EMOJI.get(rarity, '')} {RARITY_RU.get(rarity, rarity)}"
+    elif club:
+        title = f"🏒 {club}"
+    elif duplicates:
+        title = "♻️ Повторки"
+    elif new_only:
+        title = "🆕 Новые карточки"
 
     text = (
-        f"📦 Твоя коллекция (по редкости, страница {page+1} из {total_pages}):\n\n"
-        + "\n".join(lines)
-        + f"\n\nВсего уникальных карточек: {total_cards}"
+        f"{title} (стр. {page+1} из {total_pages}):\n\n" + "\n".join(lines)
+        + f"\n\nВсего уникальных: {total_cards}"
     )
 
     if edit_message and message_id:
@@ -1336,81 +1356,10 @@ async def send_cards_page(chat_id, user_id, context, page=0, edit_message=False,
             chat_id=chat_id,
             message_id=message_id,
             text=text,
-            reply_markup=markup
+            reply_markup=markup,
         )
     else:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            reply_markup=markup
-        )
-async def send_card_page(chat_id, user_id, context, edit_message=False, message_id=None):
-    # Получаем текущий индекс карточки в "карусели"
-    data = user_carousel[user_id]
-    idx = data["idx"]
-    cards = data["cards"]
-    all_count = data["all_count"]
-    card = cards[idx]
-
-    name = card['name']
-    img = card['img']
-    rarity = card['rarity']
-    stats = card['stats']
-    club = card['team_ru'] or card['team_en'] or "—"
-    pos_ru = pos_to_rus(card['pos'] or '')
-    flag = flag_from_iso3(card['country'])
-    iso = (card['country'] or '').upper()
-    count = card['count']  # <-- Количество
-
-    caption = f"*{name}*"
-    if count > 1:
-        caption += f" x{count}"
-    caption += "\n"
-    caption += f"*Клуб:* {club}\n"
-    caption += f"_Позиция:_ {pos_ru}\n"
-    caption += f"*Страна:* {flag} `{iso}`\n"
-    caption += f"*Редкость:* {RARITY_RU.get(rarity, rarity)}\n"
-    caption += "────────────\n"
-    caption += wrap_line(stats or "")
-    caption += f"\n\n[{idx+1} из {len(cards)} | Всего карт: {all_count}]"
-
-    markup = InlineKeyboardMarkup([
-        [InlineKeyboardButton("⬅️", callback_data="prev"), InlineKeyboardButton("➡️", callback_data="next")]
-    ])
-
-    try:
-        if edit_message and message_id:
-            await context.bot.edit_message_media(
-                chat_id=chat_id,
-                message_id=message_id,
-                media=InputMediaPhoto(media=img, caption=caption, parse_mode="Markdown"),
-                reply_markup=markup
-            )
-        else:
-            await context.bot.send_photo(
-                chat_id=chat_id,
-                photo=img,
-                caption=caption,
-                parse_mode="Markdown",
-                reply_markup=markup
-            )
-    except BadRequest:
-        # Если не удалось отправить фото — fallback на текст
-        if edit_message and message_id:
-            await context.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=message_id,
-                text=f"⚠️ Картинка карточки недоступна, но вот информация:\n\n{caption}",
-                reply_markup=markup,
-                parse_mode="Markdown"
-            )
-        else:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=f"⚠️ Картинка карточки недоступна, но вот информация:\n\n{caption}",
-                reply_markup=markup,
-                parse_mode="Markdown"
-            )
+        await context.bot.send_message(chat_id, text, reply_markup=markup)
 
 def get_referral_count(user_id):
     conn = get_db()
@@ -1468,102 +1417,150 @@ async def topref(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 
-@require_subscribe
-async def clubs(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    all_keys = get_all_club_keys()
-    totals = get_club_total_counts()
-    user_cnt = get_user_club_counts(uid)
+def _collection_root_markup():
+    buttons = [
+        [InlineKeyboardButton("💎 Редкость", callback_data="coll_filter_rarity")],
+        [InlineKeyboardButton("🏒 Клубы", callback_data="coll_filter_club")],
+        [InlineKeyboardButton("♻️ Повторки", callback_data="coll_filter_dupes")],
+        [InlineKeyboardButton("🆕 Новые", callback_data="coll_filter_new")],
+        [InlineKeyboardButton("📦 Все карточки", callback_data="coll_all")],
+    ]
+    return InlineKeyboardMarkup(buttons)
 
-    buttons = []
-    for key in all_keys:
-        have = user_cnt.get(key, 0)
-        total = totals.get(key, 0)
-        label = f"{key} {have}/{total}"
-        buttons.append([InlineKeyboardButton(label, callback_data=f"club_sel_{key}")])
 
+async def collection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.pop("coll", None)
     await update.message.reply_text(
-        "Выбери клуб:",
-        reply_markup=InlineKeyboardMarkup(buttons)
-    )
-
-async def mycards(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    chat_id = update.message.chat_id
-    user_cards_pagination[user_id] = 0
-    await send_cards_page(chat_id, user_id, context, page=0)
-
-async def mycards_pagination_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-    chat_id = query.message.chat_id
-    message_id = query.message.message_id
-
-    page = user_cards_pagination.get(user_id, 0)
-    if query.data == "mycards_next":
-        page += 1
-    elif query.data == "mycards_prev":
-        page -= 1
-    page = max(0, page)
-    user_cards_pagination[user_id] = page
-    try:
-        await query.answer()
-    except BadRequest:
-        return
-    await send_cards_page(chat_id, user_id, context, page=page, edit_message=True, message_id=message_id)
-
-@require_subscribe
-async def mycards2(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    cards, all_count = get_full_cards_for_user(user_id)
-    if not cards:
-        await update.message.reply_text("У тебя ещё нет карточек — получи первую командой /card!")
-        return
-    user_carousel[user_id] = {"cards": cards, "idx": 0, "all_count": all_count}
-    await send_card_page(update.message.chat_id, user_id, context)
-
-async def carousel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query   = update.callback_query
-    user_id = query.from_user.id
-    try:
-        await query.answer()
-    except BadRequest:
-        return
-    if user_id not in user_carousel:
-        return
-    if query.data == "next":
-        user_carousel[user_id]["idx"] = (
-            user_carousel[user_id]["idx"] + 1
-        ) % len(user_carousel[user_id]["cards"])
-    elif query.data == "prev":
-        user_carousel[user_id]["idx"] = (
-            user_carousel[user_id]["idx"] - 1
-        ) % len(user_carousel[user_id]["cards"])
-    await send_card_page(
-        chat_id=query.message.chat_id,
-        user_id=user_id,
-        context=context,
-        edit_message=True,
-        message_id=query.message.message_id
+        "📂 Управление коллекцией:", reply_markup=_collection_root_markup()
     )
 
 
-async def club_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def collection_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    user_id = query.from_user.id
-    club_key = query.data.replace("club_sel_", "", 1)
-    try:
-        await query.answer()
-    except BadRequest:
-        pass
-    cards, total = get_user_club_cards(user_id, club_key)
-    if not cards:
-        await query.edit_message_text("У тебя нет карточек этого клуба.")
+    data = query.data
+    uid = query.from_user.id
+    await query.answer()
+
+    if data == "coll_back":
+        context.user_data.pop("coll", None)
+        await query.edit_message_text(
+            "📂 Управление коллекцией:", reply_markup=_collection_root_markup()
+        )
         return
 
-    cards.sort(key=lambda c: (RARITY_ORDER.get(c["rarity"], 99), c["name"]))
-    user_carousel[user_id] = {"cards": cards, "idx": 0, "all_count": total}
-    await send_card_page(query.message.chat_id, user_id, context)
+    if data == "coll_filter_rarity":
+        buttons = [
+            [InlineKeyboardButton(f"{RARITY_EMOJI.get(r,'')} {RARITY_RU.get(r,r)}", callback_data=f"coll_rarity_{r}")]
+            for r in ["legendary", "mythic", "epic", "rare", "common"]
+        ]
+        buttons.append([InlineKeyboardButton("◀️ Назад", callback_data="coll_back")])
+        await query.edit_message_text("Выбери редкость:", reply_markup=InlineKeyboardMarkup(buttons))
+        return
+
+    if data.startswith("coll_rarity_"):
+        rarity = data.split("_", 2)[2]
+        context.user_data["coll"] = {"rarity": rarity, "page": 0}
+        await send_collection_page(
+            query.message.chat_id,
+            uid,
+            context,
+            page=0,
+            rarity=rarity,
+            edit_message=True,
+            message_id=query.message.message_id,
+        )
+        return
+
+    if data == "coll_filter_club":
+        all_keys = get_all_club_keys()
+        totals = get_club_total_counts()
+        user_cnt = get_user_club_counts(uid)
+        buttons = []
+        for key in all_keys:
+            have = user_cnt.get(key, 0)
+            total = totals.get(key, 0)
+            label = f"{key} {have}/{total}"
+            buttons.append([InlineKeyboardButton(label, callback_data=f"coll_club_{key}")])
+        buttons.append([InlineKeyboardButton("◀️ Назад", callback_data="coll_back")])
+        await query.edit_message_text("Выбери клуб:", reply_markup=InlineKeyboardMarkup(buttons))
+        return
+
+    if data.startswith("coll_club_"):
+        club = data.replace("coll_club_", "", 1)
+        context.user_data["coll"] = {"club": club, "page": 0}
+        await send_collection_page(
+            query.message.chat_id,
+            uid,
+            context,
+            page=0,
+            club=club,
+            edit_message=True,
+            message_id=query.message.message_id,
+        )
+        return
+
+    if data == "coll_filter_dupes":
+        context.user_data["coll"] = {"duplicates": True, "page": 0}
+        await send_collection_page(
+            query.message.chat_id,
+            uid,
+            context,
+            page=0,
+            duplicates=True,
+            edit_message=True,
+            message_id=query.message.message_id,
+        )
+        return
+
+    if data == "coll_filter_new":
+        context.user_data["coll"] = {"new_only": True, "page": 0}
+        await send_collection_page(
+            query.message.chat_id,
+            uid,
+            context,
+            page=0,
+            new_only=True,
+            edit_message=True,
+            message_id=query.message.message_id,
+        )
+        return
+
+    if data == "coll_all":
+        context.user_data["coll"] = {"page": 0}
+        await send_collection_page(
+            query.message.chat_id,
+            uid,
+            context,
+            page=0,
+            edit_message=True,
+            message_id=query.message.message_id,
+        )
+        return
+
+    if data in {"coll_next", "coll_prev"}:
+        state = context.user_data.get("coll", {})
+        page = state.get("page", 0)
+        if data == "coll_next":
+            page += 1
+        else:
+            page = max(0, page - 1)
+        state["page"] = page
+        context.user_data["coll"] = state
+        await send_collection_page(
+            query.message.chat_id,
+            uid,
+            context,
+            page=page,
+            rarity=state.get("rarity"),
+            club=state.get("club"),
+            new_only=state.get("new_only", False),
+            duplicates=state.get("duplicates", False),
+            edit_message=True,
+            message_id=query.message.message_id,
+        )
+        return
+
+
 
 async def myid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Твой Telegram user_id: {update.effective_user.id}")
@@ -1769,8 +1766,6 @@ async def admin_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 TEMP_DICTS = [
     pending_trades,
     trade_confirmations,
-    user_carousel,
-    user_cards_pagination,
     admin_edit_state,
 ]
 
@@ -1787,8 +1782,7 @@ async def post_init(application: Application):
     bot_commands = [
         BotCommand("start", "Приветствие и справка"),
         BotCommand("card", "Получить новую карточку"),
-        BotCommand("mycards", "Коллекция (листай кнопками)"),
-        BotCommand("mycards2", "Коллекция по одной карточке"),
+        BotCommand("collection", "Управление коллекцией"),
         BotCommand("myid", "Узнать свой user_id"),
         BotCommand("me", "Твой рейтинг и прогресс"),
         BotCommand("trade", "Обмен картами по ID"),
@@ -1801,7 +1795,6 @@ async def post_init(application: Application):
         BotCommand("history", "История боёв"),
         BotCommand("invite", "Пригласи друга и получи ачивки!"),
         BotCommand("topref", "ТОП по приглашениям"),
-        BotCommand("clubs", "Карточки по клубам"),
     ]
     await application.bot.set_my_commands(bot_commands)
 
@@ -1819,8 +1812,6 @@ def main():
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("card", card))
-    application.add_handler(CommandHandler("mycards", mycards))
-    application.add_handler(CommandHandler("mycards2", mycards2))
     application.add_handler(CommandHandler("myid", myid))
     application.add_handler(CommandHandler("nocooldown", nocooldown))
     application.add_handler(CommandHandler("deletecard", deletecard))
@@ -1833,8 +1824,8 @@ def main():
     application.add_handler(CommandHandler("resetweek", resetweek))
     application.add_handler(CommandHandler("trade", trade))
     application.add_handler(CallbackQueryHandler(trade_callback, pattern="^trade_"))
-    application.add_handler(CallbackQueryHandler(mycards_pagination_callback, pattern="^mycards_(next|prev)$"))
-    application.add_handler(CallbackQueryHandler(carousel_callback, pattern="^(next|prev)$"))
+    application.add_handler(CommandHandler("collection", collection))
+    application.add_handler(CallbackQueryHandler(collection_callback, pattern="^coll_"))
     application.add_handler(CallbackQueryHandler(trade_page_callback, pattern="^trade_page_(prev|next)$"))
     application.add_handler(CommandHandler("editcard", editcard))
     application.add_handler(CallbackQueryHandler(editcard_callback, pattern="^(adminedit|admineditpage|admineditstat|admineditrarity|adminsetrarity)_?"))
@@ -1846,8 +1837,6 @@ def main():
     application.add_handler(CallbackQueryHandler(check_subscribe_callback, pattern="^check_subscribe$"))
     application.add_handler(CommandHandler("invite", invite))
     application.add_handler(CommandHandler("topref", topref))
-    application.add_handler(CommandHandler("clubs", clubs))
-    application.add_handler(CommandHandler("club", clubs))
     application.add_handler(CommandHandler("team", handlers.create_team))
     application.add_handler(CallbackQueryHandler(handlers.team_callback, pattern="^team_"))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handlers.team_text_handler))
@@ -1858,7 +1847,6 @@ def main():
     application.add_handler(CallbackQueryHandler(handlers.tactic_callback, pattern="^tactic_"))
     application.add_handler(CallbackQueryHandler(handlers.duel_callback, pattern="^(challenge_\\d+|duel_cancel)$"))
     application.add_handler(CallbackQueryHandler(handlers.log_callback, pattern="^log_(prev|next|close)$"))
-    application.add_handler(CallbackQueryHandler(club_callback, pattern="^club_sel_"))
 
 
 
