@@ -138,6 +138,8 @@ async def get_user_cards(user_id):
 
 LOG_LINES_PER_PAGE = 15
 PVP_QUEUE = OrderedDict()
+# Temporary storage for logs and scores by user id
+BATTLE_LOGS = {}
 
 TACTICS = {
     "tactic_aggressive": "aggressive",
@@ -434,15 +436,18 @@ def _format_log_page(user_data):
 
 
 async def _start_log_view(user_id: int, result: dict, context: ContextTypes.DEFAULT_TYPE):
-    ud = context.application.user_data.setdefault(user_id, {})
-    ud.pop("log", None)
-    ud.pop("log_page", None)
-    ud.pop("score", None)
+    ud = BATTLE_LOGS.setdefault(user_id, {})
+    ud.clear()
     ud["log"] = result.get("log", [])
     ud["score"] = result.get("score", {"team1": 0, "team2": 0})
     ud["log_page"] = 0
     text, markup = _format_log_page(ud)
-    await context.bot.send_message(user_id, text or "Нет логов", reply_markup=markup, parse_mode="HTML")
+    await context.bot.send_message(
+        user_id,
+        text or "Нет логов",
+        reply_markup=markup,
+        parse_mode="HTML",
+    )
 
 async def tactic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -451,10 +456,8 @@ async def tactic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mode = context.user_data.get("fight_mode", "pve")
     user_id = query.from_user.id
     # clear previous logs
-    ud = context.application.user_data.setdefault(user_id, {})
-    ud.pop("log", None)
-    ud.pop("log_page", None)
-    ud.pop("score", None)
+    ud = BATTLE_LOGS.setdefault(user_id, {})
+    ud.clear()
     team_data = db.get_team(user_id)
     team_name = team_data["name"] if team_data else "Team1"
     team = await _build_team(user_id, team_data["lineup"] if team_data else None)
@@ -506,19 +509,21 @@ async def tactic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _start_log_view(update.effective_user.id, result, context)
 
 async def show_log_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text, markup = _format_log_page(context.user_data)
-    await update.callback_query.edit_message_text(text or "Нет логов", reply_markup=markup, parse_mode="HTML")
+    ud = BATTLE_LOGS.get(update.effective_user.id, {})
+    text, markup = _format_log_page(ud)
+    await update.callback_query.edit_message_text(
+        text or "Нет логов", reply_markup=markup, parse_mode="HTML"
+    )
 
 async def log_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    ud = BATTLE_LOGS.setdefault(update.effective_user.id, {})
     if query.data == "log_prev":
-        context.user_data["log_page"] = max(0, context.user_data.get("log_page", 0) - 1)
+        ud["log_page"] = max(0, ud.get("log_page", 0) - 1)
     elif query.data == "log_next":
-        context.user_data["log_page"] = context.user_data.get("log_page", 0) + 1
+        ud["log_page"] = ud.get("log_page", 0) + 1
     elif query.data == "log_close":
-        context.user_data.pop("log", None)
-        context.user_data.pop("log_page", None)
-        context.user_data.pop("score", None)
+        BATTLE_LOGS.pop(update.effective_user.id, None)
         await query.message.delete()
         return
     await show_log_page(update, context)
