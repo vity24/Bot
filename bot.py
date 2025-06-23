@@ -423,6 +423,52 @@ def extract_goalie_stats(stats: str | None) -> tuple[str, str]:
     kn = m_kn.group(1) if m_kn else "0"
     return wins, kn
 
+def format_card_caption(
+    card: dict,
+    *,
+    index: int = 0,
+    total: int = 1,
+    filter_name: str = "",
+    total_cards: int | None = None,
+    show_filter: bool = True,
+) -> str:
+    """Return formatted caption for a card."""
+    pos = card.get("pos") or ""
+    pos_ru = pos_to_rus(pos)
+    flag = flag_from_iso3(card.get("country"))
+    iso = (card.get("country") or "").upper()
+    club = (card.get("team_ru") or card.get("team_en") or "—").strip()
+    rarity = card.get("rarity", "common")
+    rarity_ru = RARITY_RU_SHORT.get(rarity, rarity)
+    rarity_emoji = RARITY_EMOJI.get(rarity, "")
+
+    parts = [
+        f"*{card.get('name','?')}*",
+        f"_{rarity_emoji} {rarity_ru} карта_",
+        "",
+        f"*Клуб:* {club}",
+        f"*Амплуа:* {'Вратарь' if pos == 'G' else pos_ru}",
+        f"*Страна:* {flag} {iso}",
+        "",
+    ]
+
+    stats = card.get("stats", "")
+    if pos == "G":
+        wins, kn = extract_goalie_stats(stats)
+        parts.append(f"📊 *Победы:* {wins}")
+        parts.append(f"*КН:* {kn}")
+    else:
+        pts = extract_points(stats)
+        parts.append(f"📊 *Очки:* {pts}")
+    parts.append("────────────")
+
+    if show_filter:
+        parts.append(f"[{index+1} из {total} | Фильтр: {filter_name}]")
+    if total_cards is not None:
+        parts.append(f"📦 Всего: {total_cards} карт")
+
+    return "\n".join(filter(None, parts))
+
 def _calculate_user_score_sync(user_id):
     conn = get_db()
     c = conn.cursor()
@@ -730,20 +776,12 @@ async def card(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.commit()
     conn.close()
 
-    pos_ru = pos_to_rus(card_obj.get('pos') or '')
-    flag = flag_from_iso3(card_obj.get('country'))
-    iso = card_obj.get('country', '').upper()
-    club = (card_obj.get('team_ru') or card_obj.get('team_en') or "—").strip()
-
-    caption = "\n".join(filter(None, [
-        f"*{card_obj.get('name','?')}*",
-        f"*Клуб:* {club}",
-        f"_Позиция:_ {pos_ru}",
-        f"*Страна:* {flag} `{iso}`",
-        f"*Редкость:* {RARITY_RU.get(card_obj.get('rarity','common'), card_obj.get('rarity','common'))}",
-        "────────────",
-        wrap_line(card_obj.get('stats',''))
-    ]))
+    _, total_cards = get_inventory_counts(user_id)
+    caption = format_card_caption(
+        card_obj,
+        total_cards=total_cards,
+        show_filter=False,
+    )
 
     try:
         await context.bot.send_photo(update.message.chat_id, card_obj.get('img', ''), caption=caption, parse_mode='Markdown')
@@ -1367,34 +1405,6 @@ async def send_card_page(chat_id, context, cards, index=0, *, user_id=None, edit
         return
     index = max(0, min(index, len(cards) - 1))
     card = cards[index]
-    pos = card.get("pos") or ""
-    pos_ru = pos_to_rus(pos)
-    flag = flag_from_iso3(card.get("country"))
-    iso = (card.get("country") or "").upper()
-    club = (card.get("team_ru") or card.get("team_en") or "—").strip()
-    rarity = card.get("rarity", "common")
-    rarity_ru = RARITY_RU_SHORT.get(rarity, rarity)
-    rarity_emoji = RARITY_EMOJI.get(rarity, "")
-
-    caption_parts = [
-        f"*{card.get('name','?')}*",
-        f"_{rarity_emoji} {rarity_ru} карта_",
-        "",
-        f"*Клуб:* {club}",
-        f"*Амплуа:* {'Вратарь' if pos == 'G' else pos_ru}",
-        f"*Страна:* {flag} {iso}",
-        "",
-    ]
-
-    stats = card.get("stats", "")
-    if pos == "G":
-        wins, kn = extract_goalie_stats(stats)
-        caption_parts.append(f"📊 *Победы:* {wins}")
-        caption_parts.append(f"*КН:* {kn}")
-    else:
-        pts = extract_points(stats)
-        caption_parts.append(f"📊 *Очки:* {pts}")
-    caption_parts.append("────────────")
     # progress info
     state = context.user_data.get("coll", {})
     if state.get("rarity"):
@@ -1409,11 +1419,17 @@ async def send_card_page(chat_id, context, cards, index=0, *, user_id=None, edit
         filter_name = "В команде"
     else:
         filter_name = "Все"
-    caption_parts.append(f"[{index+1} из {len(cards)} | Фильтр: {filter_name}]")
+    total_cards = None
     if user_id:
-        _, total = get_inventory_counts(user_id)
-        caption_parts.append(f"📦 Всего: {total} карт")
-    caption = "\n".join(filter(None, caption_parts))
+        _, total_cards = get_inventory_counts(user_id)
+    caption = format_card_caption(
+        card,
+        index=index,
+        total=len(cards),
+        filter_name=filter_name,
+        total_cards=total_cards,
+        show_filter=True,
+    )
 
     nav = []
     if index > 0:
