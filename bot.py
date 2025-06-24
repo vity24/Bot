@@ -628,7 +628,7 @@ async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines.append(format_my_rank(rank, total, int(score), lvl))
 
     text = "\n".join(lines).rstrip()
-    await update.message.reply_text(f"<pre>{text}</pre>", parse_mode="HTML")
+    await update.message.reply_text(text)
 
 @require_subscribe
 async def topxp(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -659,7 +659,7 @@ async def topxp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines.append(f"👀 Ты — #{rank} из {format(total, ',').replace(',', ' ')}\n    🔼{user_lvl:>2}")
 
     text = "\n".join(lines).rstrip()
-    await update.message.reply_text(f"<pre>{text}</pre>", parse_mode="HTML")
+    await update.message.reply_text(text)
 
 
 async def resetweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1651,7 +1651,7 @@ async def topref(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines.append(f"👥 Ты пригласил: {invited}")
 
     text = "\n".join(lines).rstrip()
-    await update.message.reply_text(f"<pre>{text}</pre>", parse_mode="HTML")
+    await update.message.reply_text(text)
 
 
 @require_subscribe
@@ -1684,7 +1684,7 @@ async def topweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines.append(f"👀 Ты — #{rank} из {total}\n    +{shorten_number(my_prog)}")
 
     text = "\n".join(lines).rstrip()
-    await update.message.reply_text(f"<pre>{text}</pre>", parse_mode="HTML")
+    await update.message.reply_text(text)
 
 
 @require_subscribe
