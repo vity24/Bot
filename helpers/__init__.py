@@ -15,14 +15,22 @@ def shorten_number(score: int) -> str:
 
 
 def format_ranking_row(index: int, username: str, score: int, level: int) -> str:
-    """Format a ranking row with aligned columns."""
+    """Format a ranking row as a two-line block without special separators."""
     medal = "🥇" if index == 1 else "🥈" if index == 2 else "🥉" if index == 3 else ""
-    name = username
-    if len(name) > 10:
-        name = name[:10] + "…"
-    name_field = f"{name:<11}"
-    score_field = f"{shorten_number(score):>6}"
+    prefix = f"{medal} " if medal else "  "
+    line1 = f"{prefix}{index}. {username}"
 
-    index_field = f"{index:>2}."
-    prefix = f"{medal}  " if medal else "   "
-    return f"{prefix}{index_field} {name_field} — {score_field} очк. | 🔼 {level:>2}"
+    lvl_field = f"{level:>2}"
+    score_text = shorten_number(score)
+    line2 = f"    {score_text} очк. 🔼{lvl_field}"
+
+    return f"{line1}\n{line2}"
+
+
+def format_my_rank(rank: int, total: int, score: int, level: int) -> str:
+    """Format the player's own rank line for the bottom of ratings."""
+    line1 = f"👀 Ты — #{rank} из {total}"
+    lvl_field = f"{level:>2}"
+    score_text = shorten_number(score)
+    line2 = f"    {score_text} очк. 🔼{lvl_field}"
+    return f"{line1}\n{line2}"
