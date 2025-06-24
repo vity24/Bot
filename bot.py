@@ -1618,6 +1618,19 @@ async def topref(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 
+@require_subscribe
+async def rank(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show available rating commands."""
+    text = (
+        "📈 Рейтинги и рекорды:\n\n"
+        "• 🏆 ТОП коллекционеров — /top\n"
+        "• 🔼 ТОП по уровню — /topxp\n"
+        "• 🤝 ТОП по приглашениям — /topref\n"
+        "• ⚡️ Прирост за неделю — /topweek"
+    )
+    await update.message.reply_text(text)
+
+
 def _collection_root_markup():
     buttons = [
         [InlineKeyboardButton("💎 Редкость", callback_data="coll_filter_rarity")],
@@ -2090,6 +2103,7 @@ async def post_init(application: Application):
         BotCommand("history", "История боёв"),
         BotCommand("invite", "Пригласи друга и получи ачивки!"),
         BotCommand("topref", "ТОП по приглашениям"),
+        BotCommand("rank", "Меню рейтингов"),
     ]
     await application.bot.set_my_commands(bot_commands)
 
@@ -2132,6 +2146,7 @@ def main():
     application.add_handler(CallbackQueryHandler(check_subscribe_callback, pattern="^check_subscribe$"))
     application.add_handler(CommandHandler("invite", invite))
     application.add_handler(CommandHandler("topref", topref))
+    application.add_handler(CommandHandler("rank", rank))
     application.add_handler(CommandHandler("team", handlers.create_team))
     application.add_handler(CallbackQueryHandler(handlers.team_callback, pattern="^team_"))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handlers.team_text_handler))
