@@ -1716,6 +1716,19 @@ async def rank(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 
+@require_subscribe
+async def rank(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show available rating commands."""
+    text = (
+        "📈 Рейтинги и рекорды:\n\n"
+        "• 🏆 ТОП коллекционеров — /top\n"
+        "• 🔼 ТОП по уровню — /topxp\n"
+        "• 🤝 ТОП по приглашениям — /topref\n"
+        "• ⚡️ Прирост за неделю — /topweek"
+    )
+    await update.message.reply_text(text)
+
+
 def _collection_root_markup():
     buttons = [
         [InlineKeyboardButton("💎 Редкость", callback_data="coll_filter_rarity")],
