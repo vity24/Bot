@@ -22,7 +22,7 @@ def format_ranking_row(index: int, username: str, score: int, level: int) -> str
 
     lvl_field = f"{level:>2}"
     score_text = shorten_number(score)
-    line2 = f"    {score_text} очк. 🔼{lvl_field}"
+    line2 = f"    {score_text} очков  🔼 {lvl_field} ур."
 
     return f"{line1}\n{line2}"
 
@@ -32,5 +32,5 @@ def format_my_rank(rank: int, total: int, score: int, level: int) -> str:
     line1 = f"👀 Ты — #{rank} из {total}"
     lvl_field = f"{level:>2}"
     score_text = shorten_number(score)
-    line2 = f"    {score_text} очк. 🔼{lvl_field}"
+    line2 = f"    {score_text} очков  🔼 {lvl_field} ур."
     return f"{line1}\n{line2}"
