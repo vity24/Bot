@@ -1248,6 +1248,7 @@ def get_full_cards_for_user(user_id):
 
     count_dict = Counter(ids)
     cards = []
+    total_count = 0
     for cid, cnt in count_dict.items():
         card = get_card_from_cache(cid)
         if not card:
@@ -1255,8 +1256,9 @@ def get_full_cards_for_user(user_id):
         card_copy = card.copy()
         card_copy["count"] = cnt
         cards.append(card_copy)
+        total_count += cnt
 
-    return cards, sum(count_dict.values())
+    return cards, total_count
 
 def get_inventory_counts(user_id):
     """Return number of unique cards and total copies for user."""
