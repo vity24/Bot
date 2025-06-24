@@ -1630,6 +1630,11 @@ def _collection_root_markup():
     return InlineKeyboardMarkup(buttons)
 
 
+def _reset_collection_state(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Remove current collection view state."""
+    context.user_data.pop("coll", None)
+
+
 async def send_club_list_page(chat_id, context, user_id, page=0, *, edit=False, message_id=None):
     all_keys = get_all_club_keys()
     totals = get_club_total_counts()
@@ -1663,7 +1668,7 @@ async def send_club_list_page(chat_id, context, user_id, page=0, *, edit=False, 
 
 
 async def collection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.pop("coll", None)
+    _reset_collection_state(context)
     context.user_data["coll_nav"] = ["collection"]
     await update.message.reply_text(
         "📂 Управление коллекцией:", reply_markup=_collection_root_markup()
@@ -1743,7 +1748,7 @@ async def collection_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             nav.pop()
         state = nav[-1]
         context.user_data["coll_nav"] = nav
-        context.user_data.pop("coll", None)
+        _reset_collection_state(context)
         await show_state(state)
         return
 
