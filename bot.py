@@ -1708,6 +1708,58 @@ async def topweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @require_subscribe
+async def topxp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    conn = get_db()
+    c = conn.cursor()
+    if ADMINS:
+        placeholders = ','.join('?' for _ in ADMINS)
+        query = f"SELECT id, username, level, xp FROM users WHERE id NOT IN ({placeholders}) ORDER BY level DESC, xp DESC"
+        c.execute(query, tuple(ADMINS))
+    else:
+        query = "SELECT id, username, level, xp FROM users ORDER BY level DESC, xp DESC"
+        c.execute(query)
+    rows = c.fetchall()
+    conn.close()
+
+    lines = ["🔼 ТОП по уровню:", ""]
+    top_rows = rows[:10]
+    scores = await asyncio.gather(*[get_user_score_cached(r[0]) for r in top_rows])
+    for i, ((uid, uname, lvl, _), score) in enumerate(zip(top_rows, scores), 1):
+        name = f"@{uname}" if uname else f"ID:{uid}"
+        lines.append(f"{i}. {name}")
+        lines.append(f"🔼 {lvl} ур.  🔥 {shorten_number(int(score))} очков")
+        lines.append("")
+
+    user_id = update.effective_user.id
+    total = len(rows)
+    rank = next((idx + 1 for idx, (uid, *_ ) in enumerate(rows) if uid == user_id), total)
+    xp_val = next((xp for uid, _, _, xp in rows if uid == user_id), 0)
+    score = int(await get_user_score_cached(user_id))
+    _, user_lvl = db.get_xp_level(user_id)
+    lines.append(f"👀 Ты — #{rank} из {total}")
+    lines.append(f"🔼 {user_lvl} ур.  🔥 {shorten_number(score)} очков")
+    if rank > 1:
+        diff = rows[rank-2][3] - xp_val
+        lines.append(f"🚀 До следующего места: {shorten_number(diff)} XP")
+
+    text = "\n".join(lines).rstrip()
+    await _send_rank_text(update, text)
+
+
+@require_subscribe
+async def rank_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = update.callback_query.data
+    if data == "rank_top":
+        await top(update, context)
+    elif data == "rank_xp":
+        await topxp(update, context)
+    elif data == "rank_ref":
+        await topref(update, context)
+    elif data == "rank_week":
+        await topweek(update, context)
+
+
+@require_subscribe
 async def rank(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show rating menu with inline buttons."""
     buttons = [
@@ -2172,6 +2224,7 @@ async def post_init(application: Application):
     bot_commands = [
         BotCommand("start", "Приветствие и справка"),
         BotCommand("card", "Получить новую карточку"),
+        BotCommand("rank", "Меню рейтингов"),
         BotCommand("collection", "Управление коллекцией"),
         BotCommand("myid", "Узнать свой user_id"),
         BotCommand("me", "Твой рейтинг и прогресс"),
@@ -2182,7 +2235,6 @@ async def post_init(application: Application):
         BotCommand("duel_list", "Список ожидающих дуэль"),
         BotCommand("history", "История боёв"),
         BotCommand("invite", "Пригласи друга и получи ачивки!"),
-        BotCommand("rank", "Меню рейтингов"),
     ]
     await application.bot.set_my_commands(bot_commands)
 
@@ -2206,9 +2258,7 @@ def main():
     application.add_handler(CommandHandler("giveallcards", giveallcards))
     application.add_handler(CommandHandler("me", me))
     application.add_handler(CommandHandler("xp", xp))
-    application.add_handler(CommandHandler("top", top))
     application.add_handler(CommandHandler("topxp", topxp))
-    application.add_handler(CommandHandler("topweek", topweek))
     application.add_handler(CommandHandler("resetweek", resetweek))
     application.add_handler(CommandHandler("trade", trade))
     application.add_handler(CallbackQueryHandler(trade_callback, pattern="^trade_"))
@@ -2224,7 +2274,6 @@ def main():
     )
     application.add_handler(CallbackQueryHandler(check_subscribe_callback, pattern="^check_subscribe$"))
     application.add_handler(CommandHandler("invite", invite))
-    application.add_handler(CommandHandler("topref", topref))
     application.add_handler(CommandHandler("rank", rank))
     application.add_handler(CallbackQueryHandler(rank_callback, pattern="^rank_"))
     application.add_handler(CommandHandler("team", handlers.create_team))
@@ -2249,48 +2298,4 @@ if __name__ == "__main__":
     import logging
     logging.basicConfig(level=logging.INFO)
     main()
-@require_subscribe
-async def topxp(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    conn = get_db()
-    c = conn.cursor()
-    placeholders = ','.join('?' for _ in ADMINS) or 'NULL'
-    query = f"SELECT id, username, level, xp FROM users WHERE id NOT IN ({placeholders}) ORDER BY level DESC, xp DESC"
-    c.execute(query, tuple(ADMINS))
-    rows = c.fetchall()
-    conn.close()
 
-    lines = ["🔼 ТОП по уровню:", ""]
-    top_rows = rows[:10]
-    scores = await asyncio.gather(*[get_user_score_cached(r[0]) for r in top_rows])
-    for i, ((uid, uname, lvl, _), score) in enumerate(zip(top_rows, scores), 1):
-        name = f"@{uname}" if uname else f"ID:{uid}"
-        lines.append(f"{i}. {name}")
-        lines.append(f"🔼 {lvl} ур.  🔥 {shorten_number(int(score))} очков")
-        lines.append("")
-
-    user_id = update.effective_user.id
-    total = len(rows)
-    rank = next((idx + 1 for idx, (uid, *_ ) in enumerate(rows) if uid == user_id), total)
-    xp_val = next((xp for uid, _, _, xp in rows if uid == user_id), 0)
-    score = int(await get_user_score_cached(user_id))
-    _, user_lvl = db.get_xp_level(user_id)
-    lines.append(f"👀 Ты — #{rank} из {total}")
-    lines.append(f"🔼 {user_lvl} ур.  🔥 {shorten_number(score)} очков")
-    if rank > 1:
-        diff = rows[rank-2][3] - xp_val
-        lines.append(f"🚀 До следующего места: {shorten_number(diff)} XP")
-
-    text = "\n".join(lines).rstrip()
-    await _send_rank_text(update, text)
-
-@require_subscribe
-async def rank_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = update.callback_query.data
-    if data == "rank_top":
-        await top(update, context)
-    elif data == "rank_xp":
-        await topxp(update, context)
-    elif data == "rank_ref":
-        await topref(update, context)
-    elif data == "rank_week":
-        await topweek(update, context)
