@@ -49,6 +49,7 @@ from functools import wraps
 import handlers
 import db
 from helpers.leveling import xp_to_next
+from helpers import shorten_number, format_ranking_row
 
 async def check_subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -581,6 +582,7 @@ async def me(update: Update, context: ContextTypes.DEFAULT_TYPE):
     score = await calculate_user_score(user_id)
     xp, lvl = db.get_xp_level(user_id)
     to_next = xp_to_next(xp)
+    unique_cnt, total_cnt = get_inventory_counts(user_id)
     medal = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else ""
     msg = (
         f"👤 Твой профиль:\n"
@@ -588,12 +590,15 @@ async def me(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• Место в рейтинге: #{rank} из {total} {medal}\n"
         f"• Прирост за неделю: {('+' if progress >= 0 else '')}{int(progress)} очк{'а' if abs(progress)%10 in [2,3,4] else ''}{' — молодец!' if progress > 0 else ''}"
         f"\n• Уровень Lv {lvl}  (до ↑ {to_next} XP)"
+        f"\n📦 Коллекция: {total_cnt} карт (уникальных: {unique_cnt})"
     )
-    # === ДОБАВЛЯЕШЬ ВОТ ЭТИ 3 СТРОКИ ===
+    if rank <= 10:
+        msg += "\n🏅 Ты в ТОП-10 коллекционеров!"
     referrals = get_referral_count(user_id)
-    achv = get_referral_achievements(referrals)
-    msg += f"\n\n👥 Приглашено: {referrals}\n{achv}"
-    # ====================================
+    achv = get_ref_achievement(referrals)
+    msg += f"\n\n👥 Приглашено: {referrals}"
+    if achv:
+        msg += f"\n{achv}"
     await update.message.reply_text(msg)
 
 @require_subscribe
@@ -610,17 +615,19 @@ async def xp(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @require_subscribe
 async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
     top10 = await get_top_users(limit=10)
-    text = (
-        "🏆 ТОП-10 коллекционеров NHL:\n"
-        "🔹 Полевой: 'Очки' на карточке\n"
-        "🔹 Вратарь: Победы ×2 + (30 – КН×10)\n"
-        "🔹 Чем реже карта, тем больше очков!\n\n"
-    )
+    lines = ["🏆 ТОП по очкам:"]
     for i, (uid, uname, score, lvl) in enumerate(top10, 1):
-        medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else ""
-        username = (f"@{uname}" if uname else f"ID:{uid}")
-        text += f"{i}. {username} — {int(score)} | Lv {lvl} {medal}\n"
-    await update.message.reply_text(text)
+        name = f"@{uname}" if uname else f"ID:{uid}"
+        lines.append(format_ranking_row(i, name, int(score), lvl))
+
+    user_id = update.effective_user.id
+    rank, total = await get_user_rank_cached(user_id)
+    score = await calculate_user_score(user_id)
+    _, lvl = db.get_xp_level(user_id)
+    lines.append(
+        f"\n👀 Ты — #{rank} из {format(total, ',').replace(',', ' ')} | {shorten_number(int(score))} очк. | 🔼 {lvl}"
+    )
+    await update.message.reply_text("\n".join(lines))
 
 @require_subscribe
 async def topxp(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -631,21 +638,27 @@ async def topxp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     c.execute(query, tuple(ADMINS))
     rows = c.fetchall()
     conn.close()
-    text = "🏅 ТОП по уровню:\n"
+    lines = ["🔼 ТОП по уровню:"]
     for i, (uid, uname, lvl, xp) in enumerate(rows, 1):
-        username = f"@{uname}" if uname else f"ID:{uid}"
-        text += f"{i}. {username} — Lv {lvl}\n"
-    await update.message.reply_text(text)
+        medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else " "
+        name = f"@{uname}" if uname else f"ID:{uid}"
+        if len(name) > 10:
+            name = name[:10] + "…"
+        lines.append(f"{medal} {i:>2}. {name:<11} — 🔼 {lvl}")
 
-@require_subscribe
-async def top50(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    top50 = await get_top_users(limit=50)
-    text = "🏆 ТОП-50 коллекционеров NHL:\n\n"
-    for i, (uid, uname, score, lvl) in enumerate(top50, 1):
-        medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else ""
-        username = (f"@{uname}" if uname else f"ID:{uid}")
-        text += f"{i}. {username} — {int(score)} | Lv {lvl} {medal}\n"
-    await update.message.reply_text(text)
+    user_id = update.effective_user.id
+    conn = get_db()
+    c = conn.cursor()
+    c.execute(f"SELECT id FROM users WHERE id NOT IN ({placeholders}) ORDER BY level DESC, xp DESC")
+    ids = [row[0] for row in c.fetchall()]
+    conn.close()
+    total = len(ids)
+    rank = ids.index(user_id) + 1 if user_id in ids else total
+    _, user_lvl = db.get_xp_level(user_id)
+    lines.append(f"\n👀 Ты — #{rank} из {format(total, ',').replace(',', ' ')} | 🔼 {user_lvl}")
+
+    await update.message.reply_text("\n".join(lines))
+
 
 async def resetweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -726,7 +739,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/collection — управление коллекцией\n"
         "/me — твой рейтинг и прогресс\n"
         "/top — топ-10 игроков\n"
-        "/top50 — топ-50 игроков\n"
         "/myid — узнать свой user_id\n"
         "/trade <user_id> — обмен картами по Telegram ID\n"
         "/invite — пригласи друга и получи ачивки!\n"
@@ -1570,6 +1582,16 @@ def get_referral_count(user_id):
     conn.close()
     return row[0] if row else 0
 
+def get_ref_achievement(count: int) -> str:
+    """Return single-line achievement label for given referral count."""
+    if count >= 20:
+        return "🏆 Легенда"
+    if count >= 10:
+        return "🥈 Капитан"
+    if count >= 5:
+        return "🥉 Маленькая команда"
+    return ""
+
 def get_referral_achievements(count):
     out = []
     if count >= 3:
@@ -1603,19 +1625,60 @@ async def invite(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def topref(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT username, referrals_count FROM users WHERE referrals_count > 0 ORDER BY referrals_count DESC LIMIT 10")
-    rows = c.fetchall()
+    c.execute(
+        "SELECT id, username, referrals_count FROM users WHERE referrals_count > 0 ORDER BY referrals_count DESC"
+    )
+    rows = [(uid, uname, cnt) for uid, uname, cnt in c.fetchall() if uid not in ADMINS]
     conn.close()
     if not rows:
         await update.message.reply_text("Пока никто не приглашал друзей.")
         return
-    medals = ["🥇","🥈","🥉"]
-    text = "🏅 Топ-10 по приглашениям:\n\n"
-    for i, (username, count) in enumerate(rows, 1):
-        medal = medals[i-1] if i <= 3 else ""
-        name = f"@{username}" if username else f"ID:{i}"
-        text += f"{i}. {name} — {count} приглашённых {medal}\n"
-    await update.message.reply_text(text)
+    rows = rows[:10]
+    lines = ["🤝 ТОП по приглашениям:"]
+    for i, (uid, username, count) in enumerate(rows, 1):
+        medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else " "
+        name = f"@{username}" if username else f"ID:{uid}"
+        if len(name) > 10:
+            name = name[:10] + "…"
+        achv = get_ref_achievement(count)
+        suffix = f" | {achv}" if achv else ""
+        lines.append(f"{medal} {i:>2}. {name:<11} — {count} приглашённых{suffix}")
+
+    user_id = update.effective_user.id
+    invited = get_referral_count(user_id)
+    lines.append(f"\n👥 Ты пригласил: {invited}")
+    await update.message.reply_text("\n".join(lines))
+
+
+@require_subscribe
+async def topweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT id, username FROM users")
+    rows = [(uid, uname) for uid, uname in c.fetchall() if uid not in ADMINS]
+    conn.close()
+
+    progress_list = []
+    for uid, uname in rows:
+        prog = get_weekly_progress(uid)
+        progress_list.append((uid, uname, prog))
+    progress_list.sort(key=lambda x: x[2], reverse=True)
+    top = progress_list[:10]
+
+    lines = ["⚡️ ТОП прироста за неделю:"]
+    for i, (uid, uname, prog) in enumerate(top, 1):
+        medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else " "
+        name = f"@{uname}" if uname else f"ID:{uid}"
+        if len(name) > 10:
+            name = name[:10] + "…"
+        lines.append(f"{medal} {i:>2}. {name:<11} — +{shorten_number(prog)}")
+
+    user_id = update.effective_user.id
+    my_prog = get_weekly_progress(user_id)
+    rank = next((idx + 1 for idx, (uid, _, _) in enumerate(progress_list) if uid == user_id), len(progress_list))
+    lines.append(f"\n👀 Ты: +{shorten_number(my_prog)} ({rank} место)")
+
+    await update.message.reply_text("\n".join(lines))
 
 
 @require_subscribe
@@ -2095,7 +2158,7 @@ async def post_init(application: Application):
         BotCommand("me", "Твой рейтинг и прогресс"),
         BotCommand("trade", "Обмен картами по ID"),
         BotCommand("top", "ТОП-10 игроков"),
-        BotCommand("top50", "ТОП-50 игроков"),
+        BotCommand("topweek", "Прирост за неделю"),
         BotCommand("team", "Создание команды"),
         BotCommand("fight", "Бой с ботом"),
         BotCommand("duel", "Дуэль с игроком"),
@@ -2129,7 +2192,7 @@ def main():
     application.add_handler(CommandHandler("xp", xp))
     application.add_handler(CommandHandler("top", top))
     application.add_handler(CommandHandler("topxp", topxp))
-    application.add_handler(CommandHandler("top50", top50))
+    application.add_handler(CommandHandler("topweek", topweek))
     application.add_handler(CommandHandler("resetweek", resetweek))
     application.add_handler(CommandHandler("trade", trade))
     application.add_handler(CallbackQueryHandler(trade_callback, pattern="^trade_"))
