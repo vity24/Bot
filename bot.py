@@ -158,7 +158,11 @@ CARD_FIELDS = [
 ]
 CARD_CACHE = {}
 RANK_CACHE: dict[int, tuple[int, int, float]] = {}
+SCORE_CACHE: dict[int, tuple[float, float]] = {}
+TOP_CACHE: tuple[list[tuple[int, str | None, float, int]], float] = ([], 0)
 RANK_TTL = 600  # seconds
+SCORE_TTL = 600  # seconds
+TOP_TTL = 600  # seconds
 
 def load_card_cache(force=False):
     """Загружаем все карточки в память для сокращения обращений к БД."""
@@ -378,7 +382,7 @@ async def send_ranking_push(user_id, context, chat_id):
         msg = f"Ты уже в ТОП-5 — круто! Продолжай собирать и держись в лидерах! 🏒"
     else:
         top5 = await get_top_users(limit=5)
-        user_score = await calculate_user_score(user_id)
+        user_score = await get_user_score_cached(user_id)
         if len(top5) == 5:
             score5 = int(top5[4][2])
             delta = int(score5 - user_score)
@@ -492,6 +496,17 @@ def _calculate_user_score_sync(user_id):
 async def calculate_user_score(*args, **kwargs):
     return await asyncio.to_thread(_calculate_user_score_sync, *args, **kwargs)
 
+def get_user_score_cached_sync(user_id: int) -> float:
+    cached = SCORE_CACHE.get(user_id)
+    if cached and time.time() - cached[1] < SCORE_TTL:
+        return cached[0]
+    score = _calculate_user_score_sync(user_id)
+    SCORE_CACHE[user_id] = (score, time.time())
+    return score
+
+async def get_user_score_cached(user_id: int) -> float:
+    return await asyncio.to_thread(get_user_score_cached_sync, user_id)
+
 def _get_user_rank_sync(user_id):
     conn = get_db()
     c = conn.cursor()
@@ -500,7 +515,7 @@ def _get_user_rank_sync(user_id):
     user_ids = [row[0] for row in c.fetchall() if not is_admin(row[0])]
     scores = []
     for uid in user_ids:
-        score = _calculate_user_score_sync(uid)
+        score = get_user_score_cached_sync(uid)
         scores.append((uid, score))
     scores.sort(key=lambda x: x[1], reverse=True)
     total = len(scores)
@@ -519,7 +534,7 @@ async def get_user_rank(user_id):
     c.execute("SELECT id FROM users")
     user_ids = [row[0] for row in c.fetchall() if not is_admin(row[0])]
     conn.close()
-    scores = await asyncio.gather(*[calculate_user_score(uid) for uid in user_ids])
+    scores = await asyncio.gather(*[get_user_score_cached(uid) for uid in user_ids])
     pairs = list(zip(user_ids, scores))
     pairs.sort(key=lambda x: x[1], reverse=True)
     total = len(pairs)
@@ -546,7 +561,7 @@ def get_weekly_progress(user_id):
     c.execute("SELECT last_week_score FROM users WHERE id=?", (user_id,))
     row = c.fetchone()
     conn.close()
-    current = _calculate_user_score_sync(user_id)
+    current = get_user_score_cached_sync(user_id)
     last = row[0] if row else 0
     return current - last
 
@@ -558,14 +573,20 @@ def _get_top_users_sync(limit=10):
     users = [(uid, uname, lvl) for (uid, uname, lvl) in c.fetchall() if not is_admin(uid)]
     user_scores = []
     for uid, uname, lvl in users:
-        score = _calculate_user_score_sync(uid)
+        score = get_user_score_cached_sync(uid)
         user_scores.append((uid, uname, score, lvl))
     user_scores.sort(key=lambda x: x[2], reverse=True)
     conn.close()
     return user_scores[:limit]
 
 async def get_top_users(*args, **kwargs):
-    return await asyncio.to_thread(_get_top_users_sync, *args, **kwargs)
+    limit = kwargs.get('limit', 10)
+    data, ts = TOP_CACHE
+    if data and time.time() - ts < TOP_TTL and len(data) >= limit:
+        return data[:limit]
+    result = await asyncio.to_thread(_get_top_users_sync, limit)
+    globals()['TOP_CACHE'] = (result, time.time())
+    return result
 
 # ------- КОМАНДЫ РЕЙТИНГА ----------
 @require_subscribe
@@ -576,7 +597,7 @@ async def me(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     rank, total = await get_user_rank_cached(user_id)
     progress = get_weekly_progress(user_id)
-    score = await calculate_user_score(user_id)
+    score = await get_user_score_cached(user_id)
     xp, lvl = db.get_xp_level(user_id)
     to_next = xp_to_next(xp)
     unique_cnt, total_cnt = get_inventory_counts(user_id)
@@ -620,7 +641,7 @@ async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id = update.effective_user.id
     rank, total = await get_user_rank_cached(user_id)
-    score = await calculate_user_score(user_id)
+    score = await get_user_score_cached(user_id)
     _, lvl = db.get_xp_level(user_id)
     lines.append(format_my_rank(rank, total, int(score), lvl))
 
@@ -667,7 +688,7 @@ async def resetweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
     c.execute("SELECT id FROM users")
     users = c.fetchall()
     for (uid,) in users:
-        score = await calculate_user_score(uid)
+        score = await get_user_score_cached(uid)
         c.execute("UPDATE users SET last_week_score=? WHERE id=?", (score, uid))
     conn.commit()
     conn.close()
