@@ -396,6 +396,17 @@ async def send_ranking_push(user_id, context, chat_id):
             msg += "Уже почти в топе!"
     await context.bot.send_message(chat_id, msg)
 
+
+async def _send_rank_text(update: Update, text: str) -> None:
+    """Send ranking text in response to a message or callback."""
+    if getattr(update, "message", None):
+        await update.message.reply_text(text)
+        return
+    if getattr(update, "callback_query", None):
+        await update.callback_query.answer()
+        await update.callback_query.message.reply_text(text)
+        return
+
 # ------- ОЧКИ и РЕЙТИНГИ -----------
 def parse_points(stats, pos):
     if pos == "G":
@@ -632,52 +643,38 @@ async def xp(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @require_subscribe
 async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    top10 = await get_top_users(limit=10)
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT id, username, level FROM users")
+    rows = [(u, n, l) for u, n, l in c.fetchall() if not is_admin(u)]
+    conn.close()
+
+    scores = await asyncio.gather(*[get_user_score_cached(u) for u, _, _ in rows])
+    pairs = [(u, n, s, l) for (u, n, l), s in zip(rows, scores)]
+    pairs.sort(key=lambda x: x[2], reverse=True)
+
     lines = ["🏆 ТОП по очкам:", ""]
-    for i, (uid, uname, score, lvl) in enumerate(top10, 1):
+    for i, (uid, uname, score, lvl) in enumerate(pairs[:10], 1):
         name = f"@{uname}" if uname else f"ID:{uid}"
-        lines.append(format_ranking_row(i, name, int(score), lvl))
+        lines.append(f"{i}. {name}")
+        lines.append(f"🔥 {shorten_number(int(score))} очков  🔼 {lvl} ур.")
         lines.append("")
 
     user_id = update.effective_user.id
-    rank, total = await get_user_rank_cached(user_id)
-    score = await get_user_score_cached(user_id)
+    total = len(pairs)
+    rank = next((idx + 1 for idx, (u, _, _, _) in enumerate(pairs) if u == user_id), total)
+    score = int(await get_user_score_cached(user_id))
     _, lvl = db.get_xp_level(user_id)
-    lines.append(format_my_rank(rank, total, int(score), lvl))
+    lines.append(f"👀 Ты — #{rank} из {total}")
+    lines.append(f"🔥 {shorten_number(score)} очков  🔼 {lvl} ур.")
+    if rank > 1:
+        diff = int(pairs[rank-2][2] - score)
+        lines.append(f"🚀 До следующего места: {shorten_number(diff)} очков")
 
     text = "\n".join(lines).rstrip()
-    await update.message.reply_text(text)
+    await _send_rank_text(update, text)
 
 @require_subscribe
-async def topxp(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    conn = get_db()
-    c = conn.cursor()
-    placeholders = ','.join('?' for _ in ADMINS) or 'NULL'
-    query = f"SELECT id, username, level, xp FROM users WHERE id NOT IN ({placeholders}) ORDER BY level DESC, xp DESC LIMIT 10"
-    c.execute(query, tuple(ADMINS))
-    rows = c.fetchall()
-    conn.close()
-    lines = ["🔼 ТОП по уровню:", ""]
-    for i, (uid, uname, lvl, xp) in enumerate(rows, 1):
-        medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else ""
-        name = f"@{uname}" if uname else f"ID:{uid}"
-        prefix = f"{medal} " if medal else "  "
-        lines.append(f"{prefix}{i}. {name}\n    🔼{lvl:>2}")
-        lines.append("")
-
-    user_id = update.effective_user.id
-    conn = get_db()
-    c = conn.cursor()
-    c.execute(f"SELECT id FROM users WHERE id NOT IN ({placeholders}) ORDER BY level DESC, xp DESC")
-    ids = [row[0] for row in c.fetchall()]
-    conn.close()
-    total = len(ids)
-    rank = ids.index(user_id) + 1 if user_id in ids else total
-    _, user_lvl = db.get_xp_level(user_id)
-    lines.append(f"👀 Ты — #{rank} из {format(total, ',').replace(',', ' ')}\n    🔼{user_lvl:>2}")
-
-    text = "\n".join(lines).rstrip()
-    await update.message.reply_text(text)
 
 
 @admin_only
@@ -756,11 +753,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/card — получить карточку\n"
         "/collection — управление коллекцией\n"
         "/me — твой рейтинг и прогресс\n"
-        "/top — топ-10 игроков\n"
+        "/rank — рейтинги игроков\n"
         "/myid — узнать свой user_id\n"
         "/trade <user_id> — обмен картами по Telegram ID\n"
         "/invite — пригласи друга и получи ачивки!\n"
-        "/topref — топ по приглашениям\n"
         "/team — создание своей команды из карточек\n"
         "/fight — бой с ботом\n"
         "/duel — дуэль с другим игроком\n"
@@ -1644,76 +1640,85 @@ async def topref(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = get_db()
     c = conn.cursor()
     c.execute(
-        "SELECT id, username, referrals_count FROM users WHERE referrals_count > 0 ORDER BY referrals_count DESC"
+        "SELECT id, username, referrals_count, level FROM users ORDER BY referrals_count DESC"
     )
-    rows = [(uid, uname, cnt) for uid, uname, cnt in c.fetchall() if not is_admin(uid)]
+    rows = [(uid, uname, cnt, lvl) for uid, uname, cnt, lvl in c.fetchall() if not is_admin(uid)]
     conn.close()
     if not rows:
-        await update.message.reply_text("Пока никто не приглашал друзей.")
+        await _send_rank_text(update, "Пока никто не приглашал друзей.")
         return
-    rows = rows[:10]
-    lines = ["🤝 ТОП по приглашениям:", ""]
-    for i, (uid, username, count) in enumerate(rows, 1):
-        medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else ""
+
+    lines = ["🫂 ТОП по приглашениям:", ""]
+    for i, (uid, username, count, lvl) in enumerate(rows[:10], 1):
         name = f"@{username}" if username else f"ID:{uid}"
-        prefix = f"{medal} " if medal else "  "
-        achv = get_ref_achievement(count)
-        achv_part = f" {achv}" if achv else ""
-        lines.append(f"{prefix}{i}. {name}\n    {count} приглашённых{achv_part}")
+        lines.append(f"{i}. {name}")
+        lines.append(f"🫂 {count}  🔼 {lvl} ур.")
         lines.append("")
 
     user_id = update.effective_user.id
-    invited = get_referral_count(user_id)
-    lines.append(f"👥 Ты пригласил: {invited}")
+    total = len(rows)
+    idx = next((j for j,(uid,_,_,_) in enumerate(rows) if uid == user_id), total-1)
+    rank = idx + 1
+    my_cnt = rows[idx][2] if idx < len(rows) else 0
+    _, my_lvl = db.get_xp_level(user_id)
+    lines.append(f"👀 Ты — #{rank} из {total}")
+    lines.append(f"🫂 {my_cnt}  🔼 {my_lvl} ур.")
+    if rank > 1:
+        diff = rows[rank-2][2] - my_cnt
+        lines.append(f"🚀 До следующего места: {diff} приглаш.")
 
     text = "\n".join(lines).rstrip()
-    await update.message.reply_text(text)
+    await _send_rank_text(update, text)
 
 
 @require_subscribe
 async def topweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT id, username FROM users")
-    rows = [(uid, uname) for uid, uname in c.fetchall() if not is_admin(uid)]
+    c.execute("SELECT id, username, level FROM users")
+    rows = [(uid, uname, lvl) for uid, uname, lvl in c.fetchall() if not is_admin(uid)]
     conn.close()
 
     progress_list = []
-    for uid, uname in rows:
+    for uid, uname, lvl in rows:
         prog = get_weekly_progress(uid)
-        progress_list.append((uid, uname, prog))
+        progress_list.append((uid, uname, prog, lvl))
     progress_list.sort(key=lambda x: x[2], reverse=True)
-    top = progress_list[:10]
 
-    lines = ["⚡️ ТОП прироста за неделю:", ""]
-    for i, (uid, uname, prog) in enumerate(top, 1):
-        medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else ""
+    lines = ["⚡️ Прирост за неделю:", ""]
+    for i, (uid, uname, prog, lvl) in enumerate(progress_list[:10], 1):
         name = f"@{uname}" if uname else f"ID:{uid}"
-        prefix = f"{medal} " if medal else "  "
-        lines.append(f"{prefix}{i}. {name}\n    +{shorten_number(prog)}")
+        lines.append(f"{i}. {name}")
+        lines.append(f"⚡️ +{shorten_number(int(prog))}  🔼 {lvl} ур.")
         lines.append("")
 
     user_id = update.effective_user.id
     my_prog = get_weekly_progress(user_id)
-    rank = next((idx + 1 for idx, (uid, _, _) in enumerate(progress_list) if uid == user_id), len(progress_list))
     total = len(progress_list)
-    lines.append(f"👀 Ты — #{rank} из {total}\n    +{shorten_number(my_prog)}")
+    rank = next((idx + 1 for idx, (uid, *_ ) in enumerate(progress_list) if uid == user_id), total)
+    _, my_lvl = db.get_xp_level(user_id)
+    lines.append(f"👀 Ты — #{rank} из {total}")
+    lines.append(f"⚡️ +{shorten_number(int(my_prog))}  🔼 {my_lvl} ур.")
+    if rank > 1:
+        diff = int(progress_list[rank-2][2] - my_prog)
+        lines.append(f"🚀 До следующего места: {shorten_number(diff)} очков")
 
     text = "\n".join(lines).rstrip()
-    await update.message.reply_text(text)
+    await _send_rank_text(update, text)
 
 
 @require_subscribe
 async def rank(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show available rating commands."""
-    text = (
-        "📈 Рейтинги и рекорды:\n\n"
-        "• 🏆 ТОП коллекционеров — /top\n"
-        "• 🔼 ТОП по уровню — /topxp\n"
-        "• 🤝 ТОП по приглашениям — /topref\n"
-        "• ⚡️ Прирост за неделю — /topweek"
+    """Show rating menu with inline buttons."""
+    buttons = [
+        [InlineKeyboardButton("🏆 ТОП по очкам", callback_data="rank_top")],
+        [InlineKeyboardButton("🔼 ТОП по уровню", callback_data="rank_xp")],
+        [InlineKeyboardButton("🫂 ТОП по приглашениям", callback_data="rank_ref")],
+        [InlineKeyboardButton("⚡️ Прирост за неделю", callback_data="rank_week")],
+    ]
+    await update.message.reply_text(
+        "📊 Выбери рейтинг:", reply_markup=InlineKeyboardMarkup(buttons)
     )
-    await update.message.reply_text(text)
 
 
 def _collection_root_markup():
@@ -2171,15 +2176,12 @@ async def post_init(application: Application):
         BotCommand("myid", "Узнать свой user_id"),
         BotCommand("me", "Твой рейтинг и прогресс"),
         BotCommand("trade", "Обмен картами по ID"),
-        BotCommand("top", "ТОП-10 игроков"),
-        BotCommand("topweek", "Прирост за неделю"),
         BotCommand("team", "Создание команды"),
         BotCommand("fight", "Бой с ботом"),
         BotCommand("duel", "Дуэль с игроком"),
         BotCommand("duel_list", "Список ожидающих дуэль"),
         BotCommand("history", "История боёв"),
         BotCommand("invite", "Пригласи друга и получи ачивки!"),
-        BotCommand("topref", "ТОП по приглашениям"),
         BotCommand("rank", "Меню рейтингов"),
     ]
     await application.bot.set_my_commands(bot_commands)
@@ -2224,6 +2226,7 @@ def main():
     application.add_handler(CommandHandler("invite", invite))
     application.add_handler(CommandHandler("topref", topref))
     application.add_handler(CommandHandler("rank", rank))
+    application.add_handler(CallbackQueryHandler(rank_callback, pattern="^rank_"))
     application.add_handler(CommandHandler("team", handlers.create_team))
     application.add_handler(CallbackQueryHandler(handlers.team_callback, pattern="^team_"))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handlers.team_text_handler))
@@ -2246,3 +2249,48 @@ if __name__ == "__main__":
     import logging
     logging.basicConfig(level=logging.INFO)
     main()
+@require_subscribe
+async def topxp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    conn = get_db()
+    c = conn.cursor()
+    placeholders = ','.join('?' for _ in ADMINS) or 'NULL'
+    query = f"SELECT id, username, level, xp FROM users WHERE id NOT IN ({placeholders}) ORDER BY level DESC, xp DESC"
+    c.execute(query, tuple(ADMINS))
+    rows = c.fetchall()
+    conn.close()
+
+    lines = ["🔼 ТОП по уровню:", ""]
+    top_rows = rows[:10]
+    scores = await asyncio.gather(*[get_user_score_cached(r[0]) for r in top_rows])
+    for i, ((uid, uname, lvl, _), score) in enumerate(zip(top_rows, scores), 1):
+        name = f"@{uname}" if uname else f"ID:{uid}"
+        lines.append(f"{i}. {name}")
+        lines.append(f"🔼 {lvl} ур.  🔥 {shorten_number(int(score))} очков")
+        lines.append("")
+
+    user_id = update.effective_user.id
+    total = len(rows)
+    rank = next((idx + 1 for idx, (uid, *_ ) in enumerate(rows) if uid == user_id), total)
+    xp_val = next((xp for uid, _, _, xp in rows if uid == user_id), 0)
+    score = int(await get_user_score_cached(user_id))
+    _, user_lvl = db.get_xp_level(user_id)
+    lines.append(f"👀 Ты — #{rank} из {total}")
+    lines.append(f"🔼 {user_lvl} ур.  🔥 {shorten_number(score)} очков")
+    if rank > 1:
+        diff = rows[rank-2][3] - xp_val
+        lines.append(f"🚀 До следующего места: {shorten_number(diff)} XP")
+
+    text = "\n".join(lines).rstrip()
+    await _send_rank_text(update, text)
+
+@require_subscribe
+async def rank_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = update.callback_query.data
+    if data == "rank_top":
+        await top(update, context)
+    elif data == "rank_xp":
+        await topxp(update, context)
+    elif data == "rank_ref":
+        await topref(update, context)
+    elif data == "rank_week":
+        await topweek(update, context)
