@@ -50,6 +50,7 @@ import handlers
 import db
 from helpers.leveling import xp_to_next
 from helpers import shorten_number, format_ranking_row, format_my_rank
+from helpers.permissions import ADMINS, is_admin, admin_only
 
 async def check_subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -85,7 +86,6 @@ def require_subscribe(func):
 
 
 TOKEN = "7649956181:AAErINkWzZJ7BofoorAHxc2fLXMPoaCjkQM"
-ADMINS = {445479731, 6463889816}
 CARD_COOLDOWN = 3 * 60 * 60  # 3 часа
 CHANNELS = [
     {"username": "@HOCKEY_CARDS_NHL", "name": "Подпишись на канал", "link": "https://t.me/HOCKEY_CARDS_NHL"},
@@ -369,9 +369,6 @@ def _get_user_cards_sync(user_id):
 async def get_user_cards(*args, **kwargs):
     return await asyncio.to_thread(_get_user_cards_sync, *args, **kwargs)
 
-def is_admin(user_id):
-    return user_id in ADMINS
-
 async def send_ranking_push(user_id, context, chat_id):
     # теперь пушим всем (можно и админам)
     rank, total = await get_user_rank_cached(user_id)
@@ -500,7 +497,7 @@ def _get_user_rank_sync(user_id):
     c = conn.cursor()
     c.execute("SELECT id FROM users")
     # Исключаем админов из рейтинга
-    user_ids = [row[0] for row in c.fetchall() if row[0] not in ADMINS]
+    user_ids = [row[0] for row in c.fetchall() if not is_admin(row[0])]
     scores = []
     for uid in user_ids:
         score = _calculate_user_score_sync(uid)
@@ -520,7 +517,7 @@ async def get_user_rank(user_id):
     conn = get_db()
     c = conn.cursor()
     c.execute("SELECT id FROM users")
-    user_ids = [row[0] for row in c.fetchall() if row[0] not in ADMINS]
+    user_ids = [row[0] for row in c.fetchall() if not is_admin(row[0])]
     conn.close()
     scores = await asyncio.gather(*[calculate_user_score(uid) for uid in user_ids])
     pairs = list(zip(user_ids, scores))
@@ -558,7 +555,7 @@ def _get_top_users_sync(limit=10):
     c = conn.cursor()
     c.execute("SELECT id, username, level FROM users")
     # Исключаем админов из топа
-    users = [(uid, uname, lvl) for (uid, uname, lvl) in c.fetchall() if uid not in ADMINS]
+    users = [(uid, uname, lvl) for (uid, uname, lvl) in c.fetchall() if not is_admin(uid)]
     user_scores = []
     for uid, uname, lvl in users:
         score = _calculate_user_score_sync(uid)
@@ -662,11 +659,9 @@ async def topxp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 
+@admin_only
 async def resetweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if not is_admin(user_id):
-        await update.message.reply_text("⛔️ Нет прав для этой команды.")
-        return
     conn = get_db()
     c = conn.cursor()
     c.execute("SELECT id FROM users")
@@ -1630,7 +1625,7 @@ async def topref(update: Update, context: ContextTypes.DEFAULT_TYPE):
     c.execute(
         "SELECT id, username, referrals_count FROM users WHERE referrals_count > 0 ORDER BY referrals_count DESC"
     )
-    rows = [(uid, uname, cnt) for uid, uname, cnt in c.fetchall() if uid not in ADMINS]
+    rows = [(uid, uname, cnt) for uid, uname, cnt in c.fetchall() if not is_admin(uid)]
     conn.close()
     if not rows:
         await update.message.reply_text("Пока никто не приглашал друзей.")
@@ -1659,7 +1654,7 @@ async def topweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = get_db()
     c = conn.cursor()
     c.execute("SELECT id, username FROM users")
-    rows = [(uid, uname) for uid, uname in c.fetchall() if uid not in ADMINS]
+    rows = [(uid, uname) for uid, uname in c.fetchall() if not is_admin(uid)]
     conn.close()
 
     progress_list = []
@@ -1942,11 +1937,9 @@ async def collection_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def myid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Твой Telegram user_id: {update.effective_user.id}")
 
+@admin_only
 async def nocooldown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if not is_admin(user_id):
-        await update.message.reply_text("⛔️ Нет прав для этой команды.")
-        return
     if user_id in admin_no_cooldown:
         admin_no_cooldown.remove(user_id)
         await update.message.reply_text("❄️ Ограничение по времени снова включено для вас.")
@@ -1954,11 +1947,9 @@ async def nocooldown(update: Update, context: ContextTypes.DEFAULT_TYPE):
         admin_no_cooldown.add(user_id)
         await update.message.reply_text("🔥 Ограничение по времени для вас отключено!")
 
+@admin_only
 async def deletecard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if not is_admin(user_id):
-        await update.message.reply_text("⛔️ Нет прав для этой команды.")
-        return
     if not context.args:
         await update.message.reply_text("⚠️ Укажите имя игрока после команды (например: /deletecard Коннор МакДэвид)")
         return
@@ -1976,11 +1967,9 @@ async def deletecard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         refresh_card_cache(row[0])
     conn.close()
 
+@admin_only
 async def giveallcards(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_id not in ADMINS:
-        await update.message.reply_text("⛔️ Нет прав для этой команды.")
-        return
 
     conn = get_db()
     c = conn.cursor()
@@ -2006,11 +1995,9 @@ async def giveallcards(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin_edit_state = {}  # user_id: {step, card_id}
 EDIT_CARDS_PER_PAGE = 20
 
+@admin_only
 async def editcard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if not is_admin(user_id):
-        await update.message.reply_text("⛔️ Нет прав для этой команды.")
-        return
     admin_edit_state[user_id] = {"step": "list"}
     await send_editcard_list(update.message.chat_id, context, 0, user_id)
 
