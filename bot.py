@@ -49,7 +49,7 @@ from functools import wraps
 import handlers
 import db
 from helpers.leveling import xp_to_next
-from helpers import shorten_number, format_ranking_row
+from helpers import shorten_number, format_ranking_row, format_my_rank
 
 async def check_subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -615,19 +615,20 @@ async def xp(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @require_subscribe
 async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
     top10 = await get_top_users(limit=10)
-    lines = ["🏆 ТОП по очкам:"]
+    lines = ["🏆 ТОП по очкам:", ""]
     for i, (uid, uname, score, lvl) in enumerate(top10, 1):
         name = f"@{uname}" if uname else f"ID:{uid}"
         lines.append(format_ranking_row(i, name, int(score), lvl))
+        lines.append("")
 
     user_id = update.effective_user.id
     rank, total = await get_user_rank_cached(user_id)
     score = await calculate_user_score(user_id)
     _, lvl = db.get_xp_level(user_id)
-    lines.append(
-        f"\n👀 Ты — #{rank} из {format(total, ',').replace(',', ' ')} | {shorten_number(int(score))} очк. | 🔼 {lvl:>2}"
-    )
-    await update.message.reply_text("\n".join(lines))
+    lines.append(format_my_rank(rank, total, int(score), lvl))
+
+    text = "\n".join(lines).rstrip()
+    await update.message.reply_text(f"<pre>{text}</pre>", parse_mode="HTML")
 
 @require_subscribe
 async def topxp(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -638,16 +639,13 @@ async def topxp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     c.execute(query, tuple(ADMINS))
     rows = c.fetchall()
     conn.close()
-    lines = ["🔼 ТОП по уровню:"]
+    lines = ["🔼 ТОП по уровню:", ""]
     for i, (uid, uname, lvl, xp) in enumerate(rows, 1):
         medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else ""
         name = f"@{uname}" if uname else f"ID:{uid}"
-        if len(name) > 10:
-            name = name[:10] + "…"
-        name_field = f"{name:<11}"
-        index_field = f"{i:>2}."
-        prefix = f"{medal}  " if medal else "   "
-        lines.append(f"{prefix}{index_field} {name_field} — 🔼 {lvl:>2}")
+        prefix = f"{medal} " if medal else "  "
+        lines.append(f"{prefix}{i}. {name}\n    🔼{lvl:>2}")
+        lines.append("")
 
     user_id = update.effective_user.id
     conn = get_db()
@@ -658,9 +656,10 @@ async def topxp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total = len(ids)
     rank = ids.index(user_id) + 1 if user_id in ids else total
     _, user_lvl = db.get_xp_level(user_id)
-    lines.append(f"\n👀 Ты — #{rank} из {format(total, ',').replace(',', ' ')} | 🔼 {user_lvl:>2}")
+    lines.append(f"👀 Ты — #{rank} из {format(total, ',').replace(',', ' ')}\n    🔼{user_lvl:>2}")
 
-    await update.message.reply_text("\n".join(lines))
+    text = "\n".join(lines).rstrip()
+    await update.message.reply_text(f"<pre>{text}</pre>", parse_mode="HTML")
 
 
 async def resetweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1637,23 +1636,22 @@ async def topref(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Пока никто не приглашал друзей.")
         return
     rows = rows[:10]
-    lines = ["🤝 ТОП по приглашениям:"]
+    lines = ["🤝 ТОП по приглашениям:", ""]
     for i, (uid, username, count) in enumerate(rows, 1):
         medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else ""
         name = f"@{username}" if username else f"ID:{uid}"
-        if len(name) > 10:
-            name = name[:10] + "…"
-        name_field = f"{name:<11}"
-        index_field = f"{i:>2}."
-        prefix = f"{medal}  " if medal else "   "
+        prefix = f"{medal} " if medal else "  "
         achv = get_ref_achievement(count)
-        suffix = f" | {achv}" if achv else ""
-        lines.append(f"{prefix}{index_field} {name_field} — {count} приглашённых{suffix}")
+        achv_part = f" {achv}" if achv else ""
+        lines.append(f"{prefix}{i}. {name}\n    {count} приглашённых{achv_part}")
+        lines.append("")
 
     user_id = update.effective_user.id
     invited = get_referral_count(user_id)
-    lines.append(f"\n👥 Ты пригласил: {invited}")
-    await update.message.reply_text("\n".join(lines))
+    lines.append(f"👥 Ты пригласил: {invited}")
+
+    text = "\n".join(lines).rstrip()
+    await update.message.reply_text(f"<pre>{text}</pre>", parse_mode="HTML")
 
 
 @require_subscribe
@@ -1671,24 +1669,22 @@ async def topweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
     progress_list.sort(key=lambda x: x[2], reverse=True)
     top = progress_list[:10]
 
-    lines = ["⚡️ ТОП прироста за неделю:"]
+    lines = ["⚡️ ТОП прироста за неделю:", ""]
     for i, (uid, uname, prog) in enumerate(top, 1):
         medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else ""
         name = f"@{uname}" if uname else f"ID:{uid}"
-        if len(name) > 10:
-            name = name[:10] + "…"
-        name_field = f"{name:<11}"
-        index_field = f"{i:>2}."
-        prefix = f"{medal}  " if medal else "   "
-        lines.append(f"{prefix}{index_field} {name_field} — +{shorten_number(prog)}")
+        prefix = f"{medal} " if medal else "  "
+        lines.append(f"{prefix}{i}. {name}\n    +{shorten_number(prog)}")
+        lines.append("")
 
     user_id = update.effective_user.id
     my_prog = get_weekly_progress(user_id)
     rank = next((idx + 1 for idx, (uid, _, _) in enumerate(progress_list) if uid == user_id), len(progress_list))
     total = len(progress_list)
-    lines.append(f"\n👀 Ты — #{rank} из {total} | +{shorten_number(my_prog)}")
+    lines.append(f"👀 Ты — #{rank} из {total}\n    +{shorten_number(my_prog)}")
 
-    await update.message.reply_text("\n".join(lines))
+    text = "\n".join(lines).rstrip()
+    await update.message.reply_text(f"<pre>{text}</pre>", parse_mode="HTML")
 
 
 @require_subscribe
