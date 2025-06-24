@@ -8,8 +8,10 @@ except ModuleNotFoundError:
 class DummyMessage:
     def __init__(self):
         self.text = None
+        self.markup = None
     async def reply_text(self, text, **kwargs):
         self.text = text
+        self.markup = kwargs.get('reply_markup')
 
 class DummyBot:
     pass
@@ -20,4 +22,5 @@ def test_rank_output(monkeypatch):
     update = types.SimpleNamespace(effective_user=types.SimpleNamespace(id=1), message=msg)
     ctx = types.SimpleNamespace(bot=DummyBot())
     asyncio.get_event_loop().run_until_complete(bot.rank(update, ctx))
-    assert "Рейтинги" in msg.text
+    assert "Выбери рейтинг" in msg.text
+    assert msg.markup is not None
