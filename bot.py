@@ -1556,7 +1556,6 @@ async def send_collection_page(
         lines.append("")
 
     total_cards = sum(r[3] for r in card_info)
-    unique_total = len(card_info)
     total_pages = (len(card_info) + CARDS_PER_PAGE - 1) // CARDS_PER_PAGE
 
     nav = []
@@ -1583,7 +1582,7 @@ async def send_collection_page(
 
     text = (
         f"{title} (стр. {page+1} из {total_pages}):\n\n" + "\n".join(lines).rstrip()
-        + f"\n\nВсего у тебя: {total_cards} карточек (уникальных: {unique_total})"
+        + f"\n\n📦 Всего: {total_cards} карт"
     )
 
     if edit_message and message_id:
