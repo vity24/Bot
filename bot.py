@@ -335,9 +335,9 @@ def _get_random_card_sync():
     rarity = weighted_random_rarity()
     c.execute(
         'SELECT * FROM cards WHERE rarity=? '
-        'AND img NOT LIKE "%default-skater.png%" '
-        'AND img NOT LIKE "%default-goalie.png%" '
-        'AND img != \'\' AND img IS NOT NULL '
+        "AND img NOT LIKE '%default-skater.png%' "
+        "AND img NOT LIKE '%default-goalie.png%' "
+        "AND img != '' AND img IS NOT NULL "
         'ORDER BY RANDOM() LIMIT 1',
         (rarity,)
     )
