@@ -6,7 +6,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest
 from battle import BattleSession
-import db
+import db_pg as db
 from helpers.leveling import level_from_xp, xp_to_next, calc_battle_xp
 
 level_up_msg = "🆙 *Новый уровень!*  Ты достиг Lv {lvl}.\n🎁 Твой приз: {reward}"
