@@ -1304,7 +1304,8 @@ def get_all_club_keys():
         """
         SELECT DISTINCT COALESCE(team_en, team_ru) AS club
           FROM cards
-         WHERE club IS NOT NULL AND club != ''
+         WHERE COALESCE(team_en, team_ru) IS NOT NULL
+           AND COALESCE(team_en, team_ru) != ''
         """
     )
     clubs = sorted(r[0] for r in c.fetchall())
@@ -1320,8 +1321,9 @@ def get_club_total_counts():
         SELECT COALESCE(team_en, team_ru) AS club,
                COUNT(DISTINCT id)
           FROM cards
-         WHERE club IS NOT NULL AND club != ''
-      GROUP BY club
+         WHERE COALESCE(team_en, team_ru) IS NOT NULL
+           AND COALESCE(team_en, team_ru) != ''
+      GROUP BY COALESCE(team_en, team_ru)
         """
     )
     data = {row[0]: row[1] for row in c.fetchall()}
@@ -1339,8 +1341,9 @@ def get_user_club_counts(user_id):
           FROM inventory
           JOIN cards ON inventory.card_id = cards.id
          WHERE inventory.user_id = ?
-           AND club IS NOT NULL AND club != ''
-      GROUP BY club
+           AND COALESCE(cards.team_en, cards.team_ru) IS NOT NULL
+           AND COALESCE(cards.team_en, cards.team_ru) != ''
+      GROUP BY COALESCE(cards.team_en, cards.team_ru)
         """,
         (user_id,)
     )
