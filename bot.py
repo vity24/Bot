@@ -2240,16 +2240,16 @@ async def post_init(application: Application):
     await application.bot.set_my_commands(bot_commands)
 
 
-async def safe_polling(app):
+def safe_polling(app):
     while True:
         try:
-            await app.run_polling()
+            app.run_polling()
         except NetworkError as e:
             logging.warning(f"Network error: {e}. Retrying in 10 sec...")
-            await asyncio.sleep(10)
+            time.sleep(10)
         except Exception as e:
             logging.exception("Unexpected error in polling:", exc_info=e)
-            await asyncio.sleep(10)
+            time.sleep(10)
 
 def main():
     setup_db()
@@ -2305,7 +2305,7 @@ def main():
 
 
 
-    asyncio.run(safe_polling(application))
+    safe_polling(application)
 
 if __name__ == "__main__":
     import logging
