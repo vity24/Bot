@@ -1,7 +1,6 @@
 import os
 import time
 import random
-import sqlite3
 import re
 import asyncio
 import logging
@@ -48,7 +47,7 @@ from telegram import (
 from collections import Counter
 from functools import wraps
 import handlers
-import db
+import db_pg as db
 from helpers.leveling import xp_to_next
 from helpers import shorten_number, format_ranking_row, format_my_rank
 from helpers.permissions import ADMINS, is_admin, admin_only
@@ -259,8 +258,7 @@ TRADE_NHL_PHRASES = [
 ]
 
 def get_db():
-    conn = sqlite3.connect(os.path.join(os.path.dirname(__file__), 'botdb.sqlite'))
-    return conn
+    return db.get_db()
 
 def setup_db():
     conn = get_db()
@@ -268,36 +266,36 @@ def setup_db():
     c.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT, last_card_time INTEGER)')
     try:
         c.execute("ALTER TABLE users ADD COLUMN last_week_score INTEGER DEFAULT 0")
-    except sqlite3.OperationalError:
+    except Exception:
         pass
     try:
         c.execute("ALTER TABLE users ADD COLUMN referrals_count INTEGER DEFAULT 0")
-    except sqlite3.OperationalError:
+    except Exception:
         pass
     try:
         c.execute("ALTER TABLE users ADD COLUMN invited_by INTEGER DEFAULT NULL")
-    except sqlite3.OperationalError:
+    except Exception:
         pass
     try:
         c.execute("ALTER TABLE users ADD COLUMN xp INTEGER DEFAULT 0")
-    except sqlite3.OperationalError:
+    except Exception:
         pass
     try:
         c.execute("ALTER TABLE users ADD COLUMN level INTEGER DEFAULT 1")
-    except sqlite3.OperationalError:
+    except Exception:
         pass
     try:
         c.execute("ALTER TABLE users ADD COLUMN xp_daily INTEGER DEFAULT 0")
-    except sqlite3.OperationalError:
+    except Exception:
         pass
     try:
         c.execute("ALTER TABLE users ADD COLUMN last_xp_reset DATE")
         c.execute("UPDATE users SET last_xp_reset = DATE('now') WHERE last_xp_reset IS NULL")
-    except sqlite3.OperationalError:
+    except Exception:
         pass
     try:
         c.execute("ALTER TABLE users ADD COLUMN win_streak INTEGER DEFAULT 0")
-    except sqlite3.OperationalError:
+    except Exception:
         pass
     # ... остальной код создания таблиц ...
     conn.commit()
