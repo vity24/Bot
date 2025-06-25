@@ -11,9 +11,18 @@ class PGCursor:
     def execute(self, query, params=None):
         if params is None:
             params = ()
-        self._cur.execute(query.replace('?', '%s'), params)
+        # psycopg2 uses the pyformat style for placeholders. Our SQL queries
+        # were originally written for SQLite and may contain ``?`` placeholders
+        # as well as percent signs used in ``LIKE`` patterns.  Percent signs not
+        # belonging to placeholders must be doubled, otherwise ``psycopg2``
+        # tries to treat them as formatting tokens which results in errors such
+        # as ``IndexError: tuple index out of range``.  Convert the placeholders
+        # and escape raw percent signs before executing the query.
+        query = query.replace('%', '%%').replace('?', '%s')
+        self._cur.execute(query, params)
     def executemany(self, query, seq):
-        self._cur.executemany(query.replace('?', '%s'), seq)
+        query = query.replace('%', '%%').replace('?', '%s')
+        self._cur.executemany(query, seq)
     def fetchone(self):
         return self._cur.fetchone()
     def fetchall(self):
@@ -122,7 +131,13 @@ def setup_team_db():
 def save_team(user_id, name, lineup, bench):
     conn = get_db()
     conn.execute(
-        '''REPLACE INTO teams (user_id, name, lineup, bench) VALUES (?, ?, ?, ?)''',
+        (
+            'INSERT INTO teams (user_id, name, lineup, bench) '
+            'VALUES (?, ?, ?, ?) '
+            'ON CONFLICT (user_id) '
+            'DO UPDATE SET name=EXCLUDED.name, '
+            'lineup=EXCLUDED.lineup, bench=EXCLUDED.bench'
+        ),
         (user_id, name, json.dumps(lineup), json.dumps(bench)),
     )
     conn.commit()
