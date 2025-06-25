@@ -75,6 +75,13 @@ def setup_battle_db():
         )
         '''
     )
+    cur = conn.execute('SELECT MAX(id) FROM battles')
+    row = cur.fetchone()
+    max_id = row[0] if row and row[0] is not None else 0
+    conn.execute(
+        "SELECT setval(pg_get_serial_sequence('battles','id'), ?, false)",
+        (max_id + 1,),
+    )
     conn.commit()
     conn.close()
 
