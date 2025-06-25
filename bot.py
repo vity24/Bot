@@ -720,7 +720,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # --- Всё что ниже — ОБЯЗАТЕЛЬНО внутри функции! ---
     conn = get_db()
     c = conn.cursor()
-    c.execute("INSERT OR IGNORE INTO users (id, username, last_card_time, invited_by, referrals_count) VALUES (?, ?, 0, NULL, 0)", (user_id, username))
+    c.execute(
+        (
+            "INSERT INTO users (id, username, last_card_time, invited_by, referrals_count) "
+            "VALUES (?, ?, 0, NULL, 0) ON CONFLICT (id) DO NOTHING"
+        ),
+        (user_id, username),
+    )
 
     # --- Обработка реферала ---
     if context.args and context.args[0].isdigit():
