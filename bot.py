@@ -4,6 +4,7 @@ import random
 import sqlite3
 import re
 import asyncio
+import logging
 import telegram
 
 sub_cache: dict[int, tuple[bool, float]] = {}
@@ -36,7 +37,7 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
-from telegram.error import BadRequest
+from telegram.error import BadRequest, NetworkError
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -2238,6 +2239,18 @@ async def post_init(application: Application):
     ]
     await application.bot.set_my_commands(bot_commands)
 
+
+async def safe_polling(app):
+    while True:
+        try:
+            await app.run_polling()
+        except NetworkError as e:
+            logging.warning(f"Network error: {e}. Retrying in 10 sec...")
+            await asyncio.sleep(10)
+        except Exception as e:
+            logging.exception("Unexpected error in polling:", exc_info=e)
+            await asyncio.sleep(10)
+
 def main():
     setup_db()
     db.setup_battle_db()
@@ -2292,7 +2305,7 @@ def main():
 
 
 
-    application.run_polling()
+    asyncio.run(safe_polling(application))
 
 if __name__ == "__main__":
     import logging
