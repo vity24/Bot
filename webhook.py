@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 # Загрузка переменных
 load_dotenv()
 
-TOKEN = "7649956181:AAErINkWzZJ7BofoorAHxc2fLXMPoaCjkQM"
+TOKEN = os.getenv("BOT_TOKEN")
 bot = Bot(TOKEN)
 application = Application.builder().token(TOKEN).build()
 
