@@ -193,7 +193,9 @@ def get_xp_level(uid: int):
     row = cur.fetchone()
     conn.close()
     if row:
-        return row[0], row[1]
+        xp = row[0] if row[0] is not None else 0
+        lvl = row[1] if row[1] is not None else 1
+        return xp, lvl
     return 0, 1
 
 
