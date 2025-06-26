@@ -486,6 +486,38 @@ async def _send_rank_text(update: Update, text: str) -> None:
         await update.callback_query.message.reply_text(text)
         return
 
+async def _call_with_query_message(func, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Invoke a handler expecting update.message when called from a callback."""
+    orig_msg = getattr(update, "message", None)
+    if orig_msg is None and getattr(update, "callback_query", None):
+        update.message = update.callback_query.message
+    try:
+        return await func(update, context)
+    finally:
+        update.message = orig_msg
+
+async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle presses of main menu buttons."""
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    if data == "menu_card":
+        await _call_with_query_message(card, update, context)
+    elif data == "menu_collection":
+        await _call_with_query_message(collection, update, context)
+    elif data == "menu_me":
+        await _call_with_query_message(me, update, context)
+    elif data == "menu_fight":
+        await _call_with_query_message(handlers.start_fight, update, context)
+    elif data == "menu_duel":
+        await _call_with_query_message(handlers.start_duel, update, context)
+    elif data == "menu_rank":
+        await _call_with_query_message(rank, update, context)
+    elif data == "menu_invite":
+        await _call_with_query_message(invite, update, context)
+    elif data == "menu_trade":
+        await query.message.reply_text("Используй /trade <user_id>")
+
 # ------- ОЧКИ и РЕЙТИНГИ -----------
 def parse_points(stats, pos):
     if pos == "G":
@@ -2361,6 +2393,7 @@ def main():
         group=5,
     )
     application.add_handler(CallbackQueryHandler(check_subscribe_callback, pattern="^check_subscribe$"))
+    application.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu_"))
     application.add_handler(CommandHandler("invite", invite))
     application.add_handler(CommandHandler("rank", rank))
     application.add_handler(CallbackQueryHandler(rank_callback, pattern="^rank_"))
