@@ -1,4 +1,4 @@
-import os, sys, types, asyncio
+import os, sys, types, asyncio, time
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 try:
     import handlers
@@ -52,4 +52,11 @@ def test_pvp_pairing(monkeypatch):
         await handlers.tactic_callback(update, ctx)
 
     asyncio.get_event_loop().run_until_complete(asyncio.gather(call(1, ctx1), call(2, ctx2)))
+    assert not handlers.PVP_QUEUE
+
+
+def test_pvp_queue_cleanup(monkeypatch):
+    handlers.PVP_QUEUE.clear()
+    handlers.PVP_QUEUE[1] = {"created": time.time() - handlers.PVP_TTL - 1}
+    handlers.cleanup_pvp_queue()
     assert not handlers.PVP_QUEUE
