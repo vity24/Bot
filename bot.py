@@ -267,6 +267,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "menu_rank": rank,
         "menu_trade": trade_info,
         "menu_invite": invite,
+        "menu_history": handlers.show_battle_history,
+        "menu_back": menu,
         "menu_admin": admin_panel,
     }
     func = mapping.get(data)
@@ -752,7 +754,13 @@ async def me(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🎯 *Твой стиль:* {style}\n"
         f"🧠 *{tagline}*"
     )
-    await update.message.reply_text(text, parse_mode="Markdown")
+    await update.message.reply_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("📜 Посмотреть историю боёв", callback_data="menu_history")]]
+        ),
+    )
 
 @require_subscribe
 async def xp(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -881,6 +889,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_main_menu(update, context)
 
 @require_subscribe
+async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show main menu. Same as /start."""
+    await send_main_menu(update, context)
+
+@require_subscribe
 async def card(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     now = int(time.time())
@@ -925,6 +938,13 @@ async def card(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.application.create_task(
         send_ranking_push(user_id, context, update.message.chat_id)
+    )
+
+    await update.message.reply_text(
+        "✨ Что дальше?",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]]
+        ),
     )
 
 # --- TRADE (ОБМЕНЫ) ---
@@ -1351,6 +1371,12 @@ async def finalize_multi_trade(context, acceptor_id, initiator_id, offer1, offer
         f"Отдал: {', '.join(offer2_names)}\n"
         f"Получил: {', '.join(offer1_names)}"
     )
+    for uid in (initiator_id, acceptor_id):
+        await context.bot.send_message(
+            uid,
+            "🎯 Готов к следующему шагу?",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]]),
+        )
     pending_trades.pop(initiator_id, None)
     pending_trades.pop(acceptor_id, None)
 
@@ -2368,19 +2394,14 @@ async def cleanup_expired(context: ContextTypes.DEFAULT_TYPE):
 
 async def post_init(application: Application):
     bot_commands = [
-        BotCommand("start", "Приветствие и справка"),
-        BotCommand("card", "Получить новую карточку"),
-        BotCommand("rank", "Меню рейтингов"),
-        BotCommand("collection", "Управление коллекцией"),
-        BotCommand("myid", "Узнать свой user_id"),
-        BotCommand("me", "Твой рейтинг и прогресс"),
-        BotCommand("trade", "Обмен картами по ID"),
-        BotCommand("team", "Создание команды"),
+        BotCommand("menu", "Главное меню"),
+        BotCommand("card", "Получить карточку"),
+        BotCommand("collection", "Моя коллекция"),
+        BotCommand("me", "Мой профиль"),
         BotCommand("fight", "Бой с ботом"),
         BotCommand("duel", "Дуэль с игроком"),
-        BotCommand("duel_list", "Список ожидающих дуэль"),
-        BotCommand("history", "История боёв"),
-        BotCommand("invite", "Пригласи друга и получи ачивки!"),
+        BotCommand("duel_list", "Кто ждёт дуэль"),
+        BotCommand("invite", "Пригласить друга"),
     ]
     await application.bot.set_my_commands(bot_commands)
 
@@ -2409,6 +2430,7 @@ def main():
     application.job_queue.run_repeating(cleanup_expired, interval=3600)
 
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("menu", menu))
     application.add_handler(CommandHandler("card", card))
     application.add_handler(CommandHandler("myid", myid))
     application.add_handler(CommandHandler("nocooldown", nocooldown))
