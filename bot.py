@@ -1398,7 +1398,16 @@ def get_rarity_emoji(rarity):
 def remove_card(user_id, card_id):
     conn = get_db()
     c = conn.cursor()
-    c.execute("DELETE FROM inventory WHERE user_id=? AND card_id=? LIMIT 1", (user_id, card_id))
+    try:
+        c.execute(
+            "DELETE FROM inventory WHERE ctid IN (SELECT ctid FROM inventory WHERE user_id=? AND card_id=? LIMIT 1)",
+            (user_id, card_id),
+        )
+    except Exception:
+        c.execute(
+            "DELETE FROM inventory WHERE user_id=? AND card_id=? LIMIT 1",
+            (user_id, card_id),
+        )
     conn.commit()
     conn.close()
 
