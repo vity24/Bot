@@ -572,7 +572,7 @@ def get_weekly_progress(user_id):
     row = c.fetchone()
     conn.close()
     current = get_user_score_cached_sync(user_id)
-    last = row[0] if row else 0
+    last = row[0] if row and row[0] is not None else 0
     return current - last
 
 def _get_top_users_sync(limit=10):
