@@ -23,3 +23,12 @@ def test_same_player_ids_across_teams_ok():
     session = BattleSession(team1, team2)
     res = session.simulate()
     assert 'winner' in res
+
+
+def test_battle_returns_strength_gap():
+    random.seed(1)
+    team1 = [make_player(1), make_player(2)]
+    team2 = [make_player(3), make_player(4)]
+    session = BattleSession(team1, team2)
+    res = session.simulate()
+    assert 'str_gap' in res
