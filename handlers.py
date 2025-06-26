@@ -22,7 +22,7 @@ async def grant_level_reward(uid: int, lvl: int, context: ContextTypes.DEFAULT_T
         if not card:
             continue
         cur.execute(
-            "INSERT INTO inventory (user_id, card_id, time_got) VALUES (?, ?, strftime('%s','now'))",
+            "INSERT INTO inventory (user_id, card_id, time_got) VALUES (?, ?, EXTRACT(EPOCH FROM NOW())::bigint)",
             (uid, card["id"]),
         )
         cards.append(card)
