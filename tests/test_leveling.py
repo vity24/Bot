@@ -81,3 +81,31 @@ def test_grant_level_reward_adds_cards(monkeypatch):
     count = c.fetchone()[0]
     conn.close()
     assert count == 2
+
+
+def test_get_xp_level_defaults_when_null():
+    import db, sqlite3
+
+    uid = 99
+    conn = db.get_db()
+    cur = conn.cursor()
+    # ensure columns exist
+    try:
+        cur.execute("ALTER TABLE users ADD COLUMN xp INTEGER")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cur.execute("ALTER TABLE users ADD COLUMN level INTEGER")
+    except sqlite3.OperationalError:
+        pass
+    cur.execute("DELETE FROM users WHERE id=?", (uid,))
+    cur.execute(
+        "INSERT INTO users (id, username, xp, level) VALUES (?, ?, NULL, NULL)",
+        (uid, 'n'),
+    )
+    conn.commit()
+    conn.close()
+
+    xp, lvl = db.get_xp_level(uid)
+    assert xp == 0
+    assert lvl == 1
