@@ -2,6 +2,7 @@ from collections import OrderedDict
 import random
 import asyncio
 import re
+import time
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest
@@ -138,6 +139,8 @@ async def get_user_cards(user_id):
     return await asyncio.to_thread(_get_user_cards_sync, user_id)
 
 LOG_LINES_PER_PAGE = 15
+# TTL for entries in PVP queue, seconds
+PVP_TTL = 600
 PVP_QUEUE = OrderedDict()
 # Temporary storage for logs and scores by user id
 BATTLE_LOGS = {}
@@ -473,6 +476,7 @@ async def tactic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "name": team_name,
             "username": query.from_user.username or str(user_id),
             "reserved": True,
+            "created": time.time(),
         }
         PVP_QUEUE[user_id] = entry
         opponents = [(uid, data) for uid, data in PVP_QUEUE.items() if uid != user_id]
@@ -584,3 +588,12 @@ async def show_battle_history(update: Update, context: ContextTypes.DEFAULT_TYPE
     for ts, opponent, res, s1, s2, mvp in battles:
         parts.append(f"🆚 {opponent}\n📅 {ts}\nСчёт: {s1} : {s2}\n🏆 Победа: {res}\n⭐️ MVP: {mvp}")
     await update.message.reply_text("\n\n".join(parts))
+
+
+def cleanup_pvp_queue():
+    """Remove stale entries from PVP queue."""
+    now = time.time()
+    for uid in list(PVP_QUEUE.keys()):
+        created = PVP_QUEUE[uid].get("created", now)
+        if now - created > PVP_TTL:
+            PVP_QUEUE.pop(uid, None)
