@@ -1735,6 +1735,9 @@ async def topxp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         for uid, uname, lvl, xp in c.fetchall()
     ]
+    # В некоторых инсталляциях порядок из БД может быть некорректным.
+    # Отсортируем ещё раз в Python по уровню и XP по убыванию.
+    rows.sort(key=lambda r: (r[2], r[3]), reverse=True)
     conn.close()
 
     lines = ["🔼 ТОП по уровню:", ""]
