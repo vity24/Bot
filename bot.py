@@ -87,6 +87,28 @@ def require_subscribe(func):
     return wrapper
 
 
+class _UpdateWrapper:
+    """Proxy Update that exposes callback message as ``message`` attribute."""
+
+    __slots__ = ("_orig",)
+
+    def __init__(self, update: Update) -> None:
+        self._orig = update
+
+    def __getattr__(self, name):
+        if name == "message":
+            return self._orig.callback_query.message
+        return getattr(self._orig, name)
+
+
+async def _call_with_query_message(func, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Call ``func`` with a proxy so it can use ``update.message``."""
+    if getattr(update, "callback_query", None):
+        await update.callback_query.answer()
+        return await func(_UpdateWrapper(update), context)
+    return await func(update, context)
+
+
 TOKEN = "7649956181:AAErINkWzZJ7BofoorAHxc2fLXMPoaCjkQM"
 CARD_COOLDOWN = 3 * 60 * 60  # 3 часа
 CHANNELS = [
@@ -229,6 +251,26 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     markup = InlineKeyboardMarkup(buttons)
 
     await update.message.reply_text(menu_text, reply_markup=markup, parse_mode="Markdown")
+
+
+async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle main menu inline buttons."""
+    data = update.callback_query.data
+    mapping = {
+        "menu_card": card,
+        "menu_collection": collection,
+        "menu_me": me,
+        "menu_fight": handlers.start_fight,
+        "menu_duel": handlers.start_duel,
+        "menu_rank": rank,
+        "menu_trade": trade,
+        "menu_invite": invite,
+    }
+    func = mapping.get(data)
+    if func:
+        await _call_with_query_message(func, update, context)
+    else:
+        await update.callback_query.answer()
 
 
 # --- Кэш для карточек ---
@@ -2349,6 +2391,7 @@ def main():
     application.add_handler(CommandHandler("topxp", topxp))
     application.add_handler(CommandHandler("resetweek", resetweek))
     application.add_handler(CommandHandler("trade", trade))
+    application.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu_"))
     application.add_handler(CallbackQueryHandler(trade_callback, pattern="^trade_"))
     application.add_handler(CommandHandler("collection", collection))
     application.add_handler(CallbackQueryHandler(collection_callback, pattern="^coll_"))
