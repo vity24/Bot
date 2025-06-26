@@ -248,6 +248,8 @@ async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🔄 Обмен картами", callback_data="menu_trade")],
         [InlineKeyboardButton("🎁 Пригласить друга", callback_data="menu_invite")],
     ]
+    if is_admin(user_id):
+        buttons.append([InlineKeyboardButton("⚙️ Админ-панель", callback_data="menu_admin")])
     markup = InlineKeyboardMarkup(buttons)
 
     await update.message.reply_text(menu_text, reply_markup=markup, parse_mode="Markdown")
@@ -263,8 +265,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "menu_fight": handlers.start_fight,
         "menu_duel": handlers.start_duel,
         "menu_rank": rank,
-        "menu_trade": trade,
+        "menu_trade": trade_info,
         "menu_invite": invite,
+        "menu_admin": admin_panel,
     }
     func = mapping.get(data)
     if func:
@@ -1039,6 +1042,18 @@ async def show_trade_selector(context, user_id, prompt, is_acceptor=False, page=
 
 
 # --- MULTI TRADE ---
+
+@require_subscribe
+async def trade_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show instructions for starting a trade."""
+    user_id = update.effective_user.id
+    text = (
+        "🔄 *Обмен картами*\n\n"
+        "Команда для обмена: `/trade <user_id>`\n"
+        f"Твой ID: `{user_id}`\n\n"
+        "Отправь этот ID другу, чтобы начать трейд!"
+    )
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 MAX_TRADE_CARDS = 5
 TRADE_CARDS_PER_PAGE = 20
@@ -2131,6 +2146,19 @@ async def collection_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def myid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Твой Telegram user_id: {update.effective_user.id}")
+
+@admin_only
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show available admin commands."""
+    text = (
+        "⚙️ *Админ-панель*\n\n"
+        "/nocooldown — снять кулдаун\n"
+        "/editcard — редактировать карточки\n"
+        "/giveallcards — выдать все недостающие\n"
+        "/resetweek — обнулить недельный прирост\n"
+        "/deletecard <имя> — удалить карту по имени"
+    )
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 @admin_only
 async def nocooldown(update: Update, context: ContextTypes.DEFAULT_TYPE):
