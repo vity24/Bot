@@ -5,6 +5,7 @@ import re
 import asyncio
 import logging
 import telegram
+import datetime
 
 sub_cache: dict[int, tuple[bool, float]] = {}
 SUB_TTL = 30  # секунд
@@ -151,6 +152,84 @@ RARITY_MULTIPLIERS = {
     "mythic": 2.5,
     "legendary": 4
 }
+
+# --- Dynamic intro and main menu helpers ---
+def get_dynamic_intro() -> str:
+    hour = datetime.datetime.now().hour
+    if 5 <= hour < 11:
+        time_greeting = "☀️ Утро чемпиона!"
+    elif 11 <= hour < 18:
+        time_greeting = "🏒 Днём выигрывают серии!"
+    elif 18 <= hour < 23:
+        time_greeting = "🌇 Вечер для легенд!"
+    else:
+        time_greeting = "🌙 Ночь — время сбора карт..."
+
+    phrases = [
+        "🔥 Толпа скандирует твоё имя...",
+        "🎯 Время показать класс!",
+        "🧊 Ты входишь на лёд...",
+        "⚡️ Заряд энергии: 100%",
+        "🤖 Скауты уже следят за тобой...",
+        "🏆 Карточка ждёт своего героя...",
+        "📢 Соперники нервно молчат...",
+    ]
+    random.shuffle(phrases)
+    return f"{time_greeting}\n{phrases[0]}\n{phrases[1]}"
+
+
+async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    username = update.effective_user.first_name or "Игрок"
+
+    xp, level = db.get_xp_level(user_id)
+    to_next = xp_to_next(xp)
+    score = int(await get_user_score_cached(user_id))
+    rank, total = await get_user_rank_cached(user_id)
+    unique_cards, total_cards = get_inventory_counts(user_id)
+    referrals = get_referral_count(user_id)
+    streak = db.get_win_streak(user_id)
+
+    intro_text = get_dynamic_intro()
+
+    if rank <= 3:
+        phrase = "🏆 Ты в ТРОЙКЕ лучших коллекционеров!"
+    elif rank <= 10:
+        phrase = "🔥 Ты в ТОП-10 — продолжаем в том же духе!"
+    elif total_cards > 100:
+        phrase = "📦 У тебя уже сотня карт! Уважение."
+    elif referrals >= 5:
+        phrase = "🎯 Ты привёл кучу друзей — красавчик!"
+    else:
+        phrase = "⚡️ Готов к новым карточкам и боям?"
+
+    menu_text = (
+        f"{intro_text}\n\n"
+        f"👤 *{username}*  |  Уровень: *{level}*\n"
+        f"📊 Очки: *{score}*  |  Ранг: *#{rank} из {total}*\n"
+        f"📦 Карт: *{total_cards}*  |  Уник: *{unique_cards}*\n"
+        f"🔥 Побед подряд: *{streak}*\n"
+        f"👥 Друзей привёл: *{referrals}*\n\n"
+        f"{phrase}\n\n"
+        "👇 Выбирай, чем заняться:"
+    )
+
+    buttons = [
+        [InlineKeyboardButton("🃏 Получить карточку", callback_data="menu_card")],
+        [InlineKeyboardButton("📦 Моя коллекция", callback_data="menu_collection")],
+        [InlineKeyboardButton("👤 Профиль и рейтинг", callback_data="menu_me")],
+        [
+            InlineKeyboardButton("⚔️ Бой с ботом", callback_data="menu_fight"),
+            InlineKeyboardButton("🆚 Дуэль", callback_data="menu_duel"),
+        ],
+        [InlineKeyboardButton("🧠 Рейтинг игроков", callback_data="menu_rank")],
+        [InlineKeyboardButton("🔄 Обмен картами", callback_data="menu_trade")],
+        [InlineKeyboardButton("🎁 Пригласить друга", callback_data="menu_invite")],
+    ]
+    markup = InlineKeyboardMarkup(buttons)
+
+    await update.message.reply_text(menu_text, reply_markup=markup, parse_mode="Markdown")
+
 
 # --- Кэш для карточек ---
 CARD_FIELDS = [
@@ -754,31 +833,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # --- Обычное приветствие и закрытие базы ---
     conn.commit()
     conn.close()
-    text = (
-        "Добро пожаловать в коллекционный бот NHL!\n"
-        "/card — получить карточку\n"
-        "/collection — управление коллекцией\n"
-        "/me — твой рейтинг и прогресс\n"
-        "/rank — рейтинги игроков\n"
-        "/myid — узнать свой user_id\n"
-        "/trade <user_id> — обмен картами по Telegram ID\n"
-        "/invite — пригласи друга и получи ачивки!\n"
-        "/team — создание своей команды из карточек\n"
-        "/fight — бой с ботом\n"
-        "/duel — дуэль с другим игроком\n"
-        "/duel_list — список желающих дуэль\n"
-        "/history — история последних 5 боёв\n"
-    )
-    if is_admin(user_id):
-        text += (
-            "\n⚙️ Админ-команды:\n"
-            "/nocooldown — снять/вернуть лимит времени\n"
-            "/deletecard <имя игрока> — удалить карточку по имени\n"
-            "/resetweek — обновить недельные приросты\n"
-            "/editcard — редактировать картоки (очки и редкость)"
-            "\n/giveallcards — выдать все недостающие карточки"
-        )
-    await update.message.reply_text(text)
+    await send_main_menu(update, context)
 
 @require_subscribe
 async def card(update: Update, context: ContextTypes.DEFAULT_TYPE):
