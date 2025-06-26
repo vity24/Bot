@@ -330,4 +330,5 @@ class BattleSession:
             "score": self.score,
             "log": self.log,
             "mvp": mvp,
+            "str_gap": self.str_gap,
         }

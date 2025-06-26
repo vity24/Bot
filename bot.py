@@ -2238,6 +2238,7 @@ async def cleanup_expired(context: ContextTypes.DEFAULT_TYPE):
             created = d[k].get("created", now)
             if now - created > TTL:
                 d.pop(k, None)
+    handlers.cleanup_pvp_queue()
 
 async def post_init(application: Application):
     bot_commands = [
