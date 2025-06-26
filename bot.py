@@ -607,7 +607,7 @@ async def me(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("У админов нет профиля в рейтинге.")
         return
     rank, total = await get_user_rank_cached(user_id)
-    progress = get_weekly_progress(user_id)
+    progress = round(get_weekly_progress(user_id))
     score = await get_user_score_cached(user_id)
     xp, lvl = db.get_xp_level(user_id)
     to_next = xp_to_next(xp)
@@ -620,7 +620,7 @@ async def me(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔥 Очки: *{int(score)}*\n"
         f"🏆 Рейтинг: *#{rank} из {total}*\n"
         f"⚡️ Прирост: *+{progress} очк* — красавчик!\n\n"
-        f"🔼 Уровень: *Lv {lvl}*\n"
+        f"🔼 Уровень: *{lvl}*\n"
         f"📈 До Lv↑: *{to_next} XP*\n\n"
         f"📦 Карт: *{total_cnt}* (уникальных: *{unique_cnt}*)\n"
         f"🎖️ В ТОП-10 коллекционеров!\n\n"
