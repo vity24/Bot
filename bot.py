@@ -50,6 +50,7 @@ import handlers
 import db_pg as db
 from helpers.leveling import xp_to_next
 from helpers import shorten_number, format_ranking_row, format_my_rank
+from helpers.styles import get_player_style
 from helpers.permissions import ADMINS, is_admin, admin_only
 
 async def check_subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -611,23 +612,23 @@ async def me(update: Update, context: ContextTypes.DEFAULT_TYPE):
     xp, lvl = db.get_xp_level(user_id)
     to_next = xp_to_next(xp)
     unique_cnt, total_cnt = get_inventory_counts(user_id)
-    medal = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else ""
-    msg = (
-        f"👤 Твой профиль:\n"
-        f"• Очки: {int(score)}\n"
-        f"• Место в рейтинге: #{rank} из {total} {medal}\n"
-        f"• Прирост за неделю: {('+' if progress >= 0 else '')}{int(progress)} очк{'а' if abs(progress)%10 in [2,3,4] else ''}{' — молодец!' if progress > 0 else ''}"
-        f"\n• Уровень Lv {lvl}  (до ↑ {to_next} XP)"
-        f"\n📦 Коллекция: {total_cnt} карт (уникальных: {unique_cnt})"
+    streak = db.get_win_streak(user_id)
+    style, tagline = get_player_style(lvl, progress, streak)
+
+    text = (
+        "👤 *Твой профиль*\n\n"
+        f"🔥 Очки: *{int(score)}*\n"
+        f"🏆 Рейтинг: *#{rank} из {total}*\n"
+        f"⚡️ Прирост: *+{progress} очк* — красавчик!\n\n"
+        f"🔼 Уровень: *Lv {lvl}*\n"
+        f"📈 До Lv↑: *{to_next} XP*\n\n"
+        f"📦 Карт: *{total_cnt}* (уникальных: *{unique_cnt}*)\n"
+        f"🎖️ В ТОП-10 коллекционеров!\n\n"
+        f"👥 Приглашено: *{get_referral_count(user_id)}*\n\n"
+        f"🎯 *Твой стиль:* {style}\n"
+        f"🧠 *{tagline}*"
     )
-    if rank <= 10:
-        msg += "\n🏅 Ты в ТОП-10 коллекционеров!"
-    referrals = get_referral_count(user_id)
-    achv = get_ref_achievement(referrals)
-    msg += f"\n\n👥 Приглашено: {referrals}"
-    if achv:
-        msg += f"\n{achv}"
-    await update.message.reply_text(msg)
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 @require_subscribe
 async def xp(update: Update, context: ContextTypes.DEFAULT_TYPE):
