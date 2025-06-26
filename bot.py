@@ -1726,7 +1726,15 @@ async def topxp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         query = "SELECT id, username, level, xp FROM users ORDER BY level DESC, xp DESC"
         c.execute(query)
-    rows = c.fetchall()
+    rows = [
+        (
+            uid,
+            uname,
+            lvl if lvl is not None else 1,
+            xp if xp is not None else 0,
+        )
+        for uid, uname, lvl, xp in c.fetchall()
+    ]
     conn.close()
 
     lines = ["🔼 ТОП по уровню:", ""]
@@ -1741,13 +1749,13 @@ async def topxp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     total = len(rows)
     rank = next((idx + 1 for idx, (uid, *_ ) in enumerate(rows) if uid == user_id), total)
-    xp_val = next((xp for uid, _, _, xp in rows if uid == user_id), 0)
+    xp_val = int(next((xp for uid, _, _, xp in rows if uid == user_id), 0))
     score = int(await get_user_score_cached(user_id))
     _, user_lvl = db.get_xp_level(user_id)
     lines.append(f"👀 Ты — #{rank} из {total}")
     lines.append(f"🔼 {user_lvl} ур.  🔥 {shorten_number(score)} очков")
     if rank > 1:
-        diff = rows[rank-2][3] - xp_val
+        diff = int(rows[rank-2][3] - xp_val)
         lines.append(f"🚀 До следующего места: {shorten_number(diff)} XP")
 
     text = "\n".join(lines).rstrip()
