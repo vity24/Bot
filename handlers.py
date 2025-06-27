@@ -9,6 +9,7 @@ from telegram.error import BadRequest
 from battle import BattleSession, BattleController
 import db_pg as db
 from helpers.leveling import level_from_xp, xp_to_next, calc_battle_xp
+from helpers.commentary import format_period_summary
 
 level_up_msg = "🆙 *Новый уровень!*  Ты достиг Lv {lvl}.\n🎁 Твой приз: {reward}"
 
@@ -462,29 +463,22 @@ async def _prompt_pvp_phase(state: dict, context: ContextTypes.DEFAULT_TYPE):
     """Send tactic selection message for the current phase to both players."""
     controller: BattleController = state["controller"]
 
-    def summary(lines):
-        return "\n".join(lines[-3:]) if lines else ""
-
     phase = controller.phase
     log = controller.session.log
     score = controller.session.score
 
+    def summary(lines):
+        return "\n".join(lines[-3:]) if lines else ""
+
     if phase == "p2":
-        text = (
-            f"{summary(log)}\nСчёт: {score['team1']} - {score['team2']}\n"
-            "⏱ Второй период: скорректируй стратегию"
-        )
+        text = format_period_summary(controller.session)
         keyboard = [
             [InlineKeyboardButton("🔁 Сделать замену", callback_data="battle_change")],
             [InlineKeyboardButton("⚔️ Уйти в атаку", callback_data="battle_attack")],
             [InlineKeyboardButton("🛡 Укрепить оборону", callback_data="battle_defense")],
         ]
     elif phase == "p3":
-        mvp = max(controller.session.contribution.items(), key=lambda x: x[1])[0] if controller.session.contribution else ""
-        text = (
-            f"{summary(log)}\nСчёт: {score['team1']} - {score['team2']}\n"
-            f"MVP: {mvp}\n⏱ Третий период: заключительный выбор"
-        )
+        text = format_period_summary(controller.session)
         keyboard = [
             [InlineKeyboardButton("⚡️ Давить до конца", callback_data="battle_pressure")],
             [InlineKeyboardButton("⛔️ Уйти в оборону", callback_data="battle_hold")],
@@ -644,13 +638,12 @@ async def battle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return "\n".join(lines[-3:]) if lines else ""
 
     phase = controller.phase
+    log = controller.session.log
+    score = controller.session.score
     if phase == "p1":
         tactic = data.split("_")[1]
         controller.step(tactic, random.choice(list(TACTICS.values())))
-        text = (
-            f"{summary(controller.session.log)}\nСчёт: {controller.session.score['team1']} - {controller.session.score['team2']}\n"
-            "⏱ Второй период: скорректируй стратегию"
-        )
+        text = format_period_summary(controller.session)
         keyboard = [
             [InlineKeyboardButton("🔁 Сделать замену", callback_data="battle_change")],
             [InlineKeyboardButton("⚔️ Уйти в атаку", callback_data="battle_attack")],
@@ -665,11 +658,7 @@ async def battle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             tactic = "defensive"
         controller.step(tactic, random.choice(list(TACTICS.values())))
-        mvp = max(controller.session.contribution.items(), key=lambda x: x[1])[0] if controller.session.contribution else ""
-        text = (
-            f"{summary(controller.session.log)}\nСчёт: {controller.session.score['team1']} - {controller.session.score['team2']}\n"
-            f"MVP: {mvp}\n⏱ Третий период: заключительный выбор"
-        )
+        text = format_period_summary(controller.session)
         keyboard = [
             [InlineKeyboardButton("⚡️ Давить до конца", callback_data="battle_pressure")],
             [InlineKeyboardButton("⛔️ Уйти в оборону", callback_data="battle_hold")],
