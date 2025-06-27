@@ -1,5 +1,6 @@
 import random
-from typing import List
+from typing import List, Dict, DefaultDict
+from collections import defaultdict
 from battle import BattleSession
 
 
@@ -7,46 +8,43 @@ def generate_premium_log(session: BattleSession, result: dict, xp_gain: int = 85
     """Generate telecast-style premium log for the match."""
     lines: List[str] = []
 
-    # Real goal scorers from the session
-    for goal in session.goals:
-        player = goal["player"]
-        team = goal["team"]
-        lines.append(f"🥅 <b>{player}</b> 🎯 кладёт шайбу в сетку! <i>({team})</i>")
+    # group goals by period to match scoreboard
+    goals_by_period: DefaultDict[int, List[Dict]] = defaultdict(list)
+    for g in session.goals:
+        goals_by_period[g.get("period", 1)].append(g)
 
-    # Random save moments
     goalies = [p for p in session.team1 + session.team2 if (p.get("pos") or "").startswith("G")]
-    if goalies:
-        for _ in range(random.randint(1, 2)):
-            g = random.choice(goalies)
-            lines.append(f"🛡 <b>{g['name']}</b> спасает после мощного броска!")
 
-    # Random fan noise
-    if random.random() < 0.5:
-        lines.append("🏟 <i>Фанаты запускают волну, арена гудит!</i>")
+    max_period = max(goals_by_period.keys(), default=session.current_period or 3)
+    for period in range(1, max_period + 1):
+        period_lines: List[str] = []
 
-    # Random expected goals stats
-    xg1 = round(random.uniform(0.5, 3.0), 1)
-    xg2 = round(random.uniform(0.5, 3.0), 1)
-    lines.append(f"📊 <b>XG:</b> {session.name1} {xg1} — {session.name2} {xg2}")
+        # add real goal scorers for this period
+        for g in goals_by_period.get(period, []):
+            period_lines.append(f"🥅 <b>{g['player']}</b> 🎯 кладёт шайбу в сетку! <i>({g['team']})</i>")
 
-    # Occasional tactic prompt
-    if random.random() < 0.3:
-        lines.append("⏱ <b>Время сменить тактику!</b>")
+        target = random.randint(7, 8)
+        while len(period_lines) < target:
+            r = random.random()
+            if r < 0.4 and goalies:
+                gk = random.choice(goalies)
+                period_lines.append(f"🛡 <b>{gk['name']}</b> спасает бросок в упор!")
+            elif r < 0.7:
+                period_lines.append("🏟 <i>Фанаты запускают волну, арена гудит!</i>")
+            elif r < 0.9:
+                xg1 = round(random.uniform(0.5, 3.0), 1)
+                xg2 = round(random.uniform(0.5, 3.0), 1)
+                period_lines.append(f"📊 <b>XG:</b> {session.name1} {xg1} — {session.name2} {xg2}")
+            else:
+                period_lines.append("⏱ <b>Время сменить тактику на следующий период!</b>")
 
-    # Viral hype messages
-    if random.random() < 0.2:
-        lines.append("🌟 ТВОЯ КОМАНДА В ТРЕНДЕ! 4 победы подряд!")
-        lines.append("💎 VIP-ложи аплодируют твоей игре!")
+        random.shuffle(period_lines)
+        lines.extend(period_lines)
 
-    # Rare meme events
-    lines.append("🤣 Судья чуть сам шайбу не поймал!")
-    if random.random() < 0.02:
-        lines.append("🚑 Купари легко травмировался — пропустит матч (2% шанс)")
-
-    # Final summary
+    # Final summary block
     s1 = result.get("score", {}).get("team1", 0)
     s2 = result.get("score", {}).get("team2", 0)
-    lines.append(f"🏆 Матч окончен: {session.name1} {s1} — {s2} {session.name2}")
+    lines.append(f"🏆 Матч завершён: {session.name1} {s1} — {s2} {session.name2}")
     mvp = result.get("mvp")
     if mvp:
         goals = sum(1 for g in session.goals if g["player"] == mvp)
