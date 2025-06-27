@@ -14,15 +14,6 @@ class DummyBot:
     async def delete_message(self, *a, **kw):
         pass
 
-class DummyQuery:
-    def __init__(self, uid):
-        self.from_user = types.SimpleNamespace(id=uid, username=f'u{uid}')
-        self.message = types.SimpleNamespace(chat_id=uid, message_id=1)
-        self.data = 'tactic_balanced'
-    async def answer(self, *a, **kw):
-        pass
-    async def edit_message_text(self, *a, **kw):
-        pass
 
 async def fake_run(*a, **kw):
     return {'winner':'team1','score':{'team1':1,'team2':0},'log':[], 'str_gap':0}
@@ -47,9 +38,10 @@ def test_pvp_pairing(monkeypatch):
     ctx2 = types.SimpleNamespace(bot=bot, user_data={'fight_mode':'pvp'}, application=types.SimpleNamespace(user_data=app_data))
 
     async def call(uid, ctx):
-        q = DummyQuery(uid)
-        update = types.SimpleNamespace(callback_query=q, effective_user=q.from_user)
-        await handlers.tactic_callback(update, ctx)
+        user = types.SimpleNamespace(id=uid, username=f'u{uid}')
+        msg = types.SimpleNamespace(chat_id=uid, reply_text=lambda *a, **kw: None)
+        update = types.SimpleNamespace(message=msg, effective_user=user)
+        await handlers.start_duel(update, ctx)
 
     asyncio.get_event_loop().run_until_complete(asyncio.gather(call(1, ctx1), call(2, ctx2)))
     assert not handlers.PVP_QUEUE
