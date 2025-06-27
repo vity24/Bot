@@ -366,13 +366,51 @@ async def start_fight(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def start_duel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Join PvP queue without tactic selection."""
     context.user_data["fight_mode"] = "pvp"
-    keyboard = [
-        [InlineKeyboardButton("⚔️ Агрессивная", callback_data="tactic_aggressive")],
-        [InlineKeyboardButton("🛡️ Оборонительная", callback_data="tactic_defensive")],
-        [InlineKeyboardButton("⚖️ Сбалансированная", callback_data="tactic_balanced")],
-    ]
-    await update.message.reply_text("Выбери тактику для дуэли:", reply_markup=InlineKeyboardMarkup(keyboard))
+    user = update.effective_user
+    user_id = user.id
+    tactic = "balanced"
+
+    # clear previous logs
+    ud = BATTLE_LOGS.setdefault(user_id, {})
+    ud.clear()
+
+    team_data = db.get_team(user_id)
+    team_name = team_data["name"] if team_data else "Team1"
+    team = await _build_team(user_id, team_data["lineup"] if team_data else None)
+
+    existing = PVP_QUEUE.get(user_id)
+    if existing and existing.get("reserved"):
+        await update.message.reply_text("Ожидание соперника...")
+        return
+
+    entry = {
+        "team": team,
+        "tactic": tactic,
+        "name": team_name,
+        "username": user.username or str(user_id),
+        "reserved": True,
+        "created": time.time(),
+    }
+    PVP_QUEUE[user_id] = entry
+
+    opponents = [(uid, data) for uid, data in PVP_QUEUE.items() if uid != user_id]
+    if not opponents:
+        markup = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отменить", callback_data="duel_cancel")]])
+        await update.message.reply_text("Ждём второго игрока...", reply_markup=markup)
+    elif len(opponents) == 1:
+        opp_id, opp_data = opponents[0]
+        PVP_QUEUE.pop(opp_id, None)
+        PVP_QUEUE.pop(user_id, None)
+        await _start_pvp_duel(user_id, opp_id, team, opp_data["team"], team_name, opp_data["name"], context)
+    else:
+        buttons = [
+            [InlineKeyboardButton(data.get("username", str(uid)), callback_data=f"challenge_{uid}")]
+            for uid, data in opponents
+        ]
+        buttons.append([InlineKeyboardButton("❌ Отменить", callback_data="duel_cancel")])
+        await update.message.reply_text("Выбери соперника:", reply_markup=InlineKeyboardMarkup(buttons))
 
 async def duel_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -522,25 +560,8 @@ def _format_log_page(user_data):
 
 
 async def _start_log_view(user_id: int, result: dict, context: ContextTypes.DEFAULT_TYPE):
-    ud = BATTLE_LOGS.setdefault(user_id, {})
-    ud.clear()
-    ud["log"] = result.get("log", [])
-    ud["score"] = result.get("score", {"team1": 0, "team2": 0})
-    ud["log_page"] = 0
-    text, markup = _format_log_page(ud)
-    await context.bot.send_message(
-        user_id,
-        text or "Нет логов",
-        reply_markup=markup,
-        parse_mode="HTML",
-    )
-    await context.bot.send_message(
-        user_id,
-        "✨ Что дальше?",
-        reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]]
-        ),
-    )
+    """Log view disabled."""
+    return
 
 async def tactic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
