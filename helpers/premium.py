@@ -19,24 +19,34 @@ def generate_premium_log(session: BattleSession, result: dict, xp_gain: int = 85
     for period in range(1, max_period + 1):
         period_lines: List[str] = []
 
-        # add real goal scorers for this period
-        for g in goals_by_period.get(period, []):
-            period_lines.append(f"🥅 <b>{g['player']}</b> 🎯 кладёт шайбу в сетку! <i>({g['team']})</i>")
+        # add real goal scorers for this period (exactly as many as scored)
+        goal_events = goals_by_period.get(period, [])
+        for g in goal_events:
+            period_lines.append(
+                f"🥅 <b>{g['player']}</b> 🎯 кладёт шайбу в сетку! <i>({g['team']})</i>"
+            )
 
-        target = random.randint(7, 8)
-        while len(period_lines) < target:
+        # add a few extra events (4-5) for richness
+        extra_events_target = len(goal_events) + random.randint(4, 5)
+        while len(period_lines) < extra_events_target:
             r = random.random()
             if r < 0.4 and goalies:
                 gk = random.choice(goalies)
-                period_lines.append(f"🛡 <b>{gk['name']}</b> спасает бросок в упор!")
+                period_lines.append(
+                    f"🛡 <b>{gk['name']}</b> спасает бросок!"
+                )
             elif r < 0.7:
-                period_lines.append("🏟 <i>Фанаты запускают волну, арена гудит!</i>")
+                period_lines.append("🏟 <i>Фанаты запускают волну!</i>")
             elif r < 0.9:
                 xg1 = round(random.uniform(0.5, 3.0), 1)
                 xg2 = round(random.uniform(0.5, 3.0), 1)
-                period_lines.append(f"📊 <b>XG:</b> {session.name1} {xg1} — {session.name2} {xg2}")
+                period_lines.append(
+                    f"📊 <b>XG:</b> {session.name1} {xg1} — {session.name2} {xg2}"
+                )
             else:
-                period_lines.append("⏱ <b>Время сменить тактику на следующий период!</b>")
+                period_lines.append(
+                    "⏱ <b>Готовь тактику на следующий период!</b>"
+                )
 
         random.shuffle(period_lines)
         lines.extend(period_lines)
@@ -44,7 +54,7 @@ def generate_premium_log(session: BattleSession, result: dict, xp_gain: int = 85
     # Final summary block
     s1 = result.get("score", {}).get("team1", 0)
     s2 = result.get("score", {}).get("team2", 0)
-    lines.append(f"🏆 Матч завершён: {session.name1} {s1} — {s2} {session.name2}")
+    lines.append(f"🏆 Матч окончен: {session.name1} {s1} — {s2} {session.name2}")
     mvp = result.get("mvp")
     if mvp:
         goals = sum(1 for g in session.goals if g["player"] == mvp)
