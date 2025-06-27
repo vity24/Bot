@@ -10,6 +10,7 @@ from battle import BattleSession, BattleController
 import db_pg as db
 from helpers.leveling import level_from_xp, xp_to_next, calc_battle_xp
 from helpers.commentary import format_period_summary, format_final_summary
+from helpers.premium import generate_premium_log
 
 level_up_msg = "🆙 *Новый уровень!*  Ты достиг Lv {lvl}.\n🎁 Твой приз: {reward}"
 
@@ -559,9 +560,26 @@ def _format_log_page(user_data):
     return f"{header}\n{body}", markup
 
 
-async def _start_log_view(user_id: int, result: dict, context: ContextTypes.DEFAULT_TYPE):
-    """Log view disabled."""
-    return
+async def _start_log_view(
+    user_id: int,
+    result: dict,
+    session: BattleSession,
+    context: ContextTypes.DEFAULT_TYPE,
+    xp_gain: int = 0,
+) -> None:
+    """Send battle log to the user using premium formatting."""
+    ud = BATTLE_LOGS.setdefault(user_id, {})
+    ud.clear()
+    ud["log"] = generate_premium_log(session, result, xp_gain)
+    ud["score"] = result.get("score", {"team1": 0, "team2": 0})
+    ud["log_page"] = 0
+    text, markup = _format_log_page(ud)
+    await context.bot.send_message(
+        user_id,
+        text or "Нет логов",
+        reply_markup=markup,
+        parse_mode="HTML",
+    )
 
 async def tactic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -613,7 +631,7 @@ async def tactic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         xp_gain, lvl, leveled = await apply_xp(user_id, result, True, context)
         summary = format_final_summary(session, result, xp_gain, lvl, leveled)
         await context.bot.send_message(user_id, summary, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]]))
-        await _start_log_view(update.effective_user.id, result, context)
+        await _start_log_view(update.effective_user.id, result, session, context, xp_gain)
 
 async def show_log_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ud = BATTLE_LOGS.get(update.effective_user.id, {})
@@ -716,7 +734,7 @@ async def battle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 summary_text,
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]])
             )
-            await _start_log_view(query.from_user.id, result, context)
+            await _start_log_view(query.from_user.id, result, controller.session, context, xp_gain)
         state.clear()
     elif phase == "ot":
         tactic = "aggressive" if data == "battle_ot_attack" else "defensive"
@@ -728,7 +746,7 @@ async def battle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             summary_text,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]])
         )
-        await _start_log_view(query.from_user.id, result, context)
+        await _start_log_view(query.from_user.id, result, controller.session, context, xp_gain)
         state.clear()
 
 
@@ -785,8 +803,8 @@ async def _handle_pvp_battle(update: Update, context: ContextTypes.DEFAULT_TYPE)
         summary2 = format_final_summary(controller.session, opp_result, xp2, lvl2, up2)
         await context.bot.send_message(uid1, summary1, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]]))
         await context.bot.send_message(uid2, summary2, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]]))
-        await _start_log_view(uid1, result, context)
-        await _start_log_view(uid2, result, context)
+        await _start_log_view(uid1, result, controller.session, context, xp1)
+        await _start_log_view(uid2, result, controller.session, context, xp2)
         DUEL_USERS.pop(uid1, None)
         DUEL_USERS.pop(uid2, None)
         ACTIVE_DUELS.pop(duel_key, None)
