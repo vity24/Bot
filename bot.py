@@ -2470,10 +2470,12 @@ def main():
     application.add_handler(CallbackQueryHandler(handlers.team_callback, pattern="^team_"))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handlers.team_text_handler))
     application.add_handler(CommandHandler("fight", handlers.start_fight))
+    application.add_handler(CommandHandler("match", handlers.start_match))
     application.add_handler(CommandHandler("duel", handlers.start_duel))
     application.add_handler(CommandHandler("duel_list", handlers.duel_list))
     application.add_handler(CommandHandler("history", handlers.show_battle_history))
     application.add_handler(CallbackQueryHandler(handlers.tactic_callback, pattern="^tactic_"))
+    application.add_handler(CallbackQueryHandler(handlers.match_callback, pattern="^match_"))
     application.add_handler(CallbackQueryHandler(handlers.duel_callback, pattern="^(challenge_\\d+|duel_cancel)$"))
     application.add_handler(CallbackQueryHandler(handlers.log_callback, pattern="^log_(prev|next|close)$"))
 
