@@ -114,6 +114,7 @@ class BattleSession:
         self.avg_power1 = sum(p["strength"] for p in self.team1) / len(self.team1)
         self.avg_power2 = sum(p["strength"] for p in self.team2) / len(self.team2)
         self.str_gap = (self.avg_power2 - self.avg_power1) / max(self.avg_power1, 1)
+        self.current_period = 0
 
     @staticmethod
     def _age(player: Dict) -> int:
@@ -209,6 +210,68 @@ class BattleSession:
         for p in team:
             p["strength"] *= random.uniform(0.97, 1.0)
 
+    def _simulate_period(self, attack_mod1: float, defense_mod1: float,
+                         attack_mod2: float, defense_mod2: float,
+                         penalty1: float, penalty2: float) -> None:
+        """Run one period of the match."""
+        for _ in range(5):
+            attacker_team1 = random.choice(self._attackers(self.team1))
+            goalie_team2 = self._goalie(self.team2)
+            if random.random() < 0.02:
+                attacker_team1["injured"] = True
+                self._log_action(1, attacker_team1, random.choice(INJURY_ACTIONS))
+            elif attacker_team1["strength"] < 25 and random.random() < 0.1 * penalty1:
+                self._log_action(1, attacker_team1, random.choice(PENALTY_ACTIONS))
+            elif random.random() < 0.01:
+                self._log_action(1, attacker_team1, random.choice(FIGHT_ACTIONS))
+            else:
+                if self._attempt_goal(attacker_team1, goalie_team2, attack_mod1, defense_mod2):
+                    self.score["team1"] += 1
+                    self.contribution[attacker_team1["name"]] += 1
+                    self._log_action(1, attacker_team1, random.choice(GOAL_ACTIONS))
+                else:
+                    self.contribution[goalie_team2["name"]] += 1
+                    r = random.random()
+                    if r < 0.1:
+                        self._log_action(1, attacker_team1, random.choice(POST_ACTIONS))
+                    elif r < 0.35:
+                        defender = self._defender(self.team2)
+                        self._log_action(2, defender, random.choice(BLOCK_ACTIONS))
+                    elif r < 0.55:
+                        self._log_action(1, attacker_team1, random.choice(MISS_ACTIONS))
+                    else:
+                        self._log_action(2, goalie_team2, random.choice(SAVE_ACTIONS))
+
+            attacker_team2 = random.choice(self._attackers(self.team2))
+            goalie_team1 = self._goalie(self.team1)
+            if random.random() < 0.02:
+                attacker_team2["injured"] = True
+                self._log_action(2, attacker_team2, random.choice(INJURY_ACTIONS))
+            elif attacker_team2["strength"] < 25 and random.random() < 0.1 * penalty2:
+                self._log_action(2, attacker_team2, random.choice(PENALTY_ACTIONS))
+            elif random.random() < 0.01:
+                self._log_action(2, attacker_team2, random.choice(FIGHT_ACTIONS))
+            else:
+                if self._attempt_goal(attacker_team2, goalie_team1, attack_mod2, defense_mod1):
+                    self.score["team2"] += 1
+                    self.contribution[attacker_team2["name"]] += 1
+                    self._log_action(2, attacker_team2, random.choice(GOAL_ACTIONS))
+                else:
+                    self.contribution[goalie_team1["name"]] += 1
+                    r = random.random()
+                    if r < 0.1:
+                        self._log_action(2, attacker_team2, random.choice(POST_ACTIONS))
+                    elif r < 0.35:
+                        defender = self._defender(self.team1)
+                        self._log_action(1, defender, random.choice(BLOCK_ACTIONS))
+                    elif r < 0.55:
+                        self._log_action(2, attacker_team2, random.choice(MISS_ACTIONS))
+                    else:
+                        self._log_action(1, goalie_team1, random.choice(SAVE_ACTIONS))
+
+        self._apply_fatigue(self.team1)
+        self._apply_fatigue(self.team2)
+
     def _shootout(self, team1: List[Dict], team2: List[Dict]):
         shooters1 = [p for p in team1 if p.get("pos") != "G" and not p["injured"]]
         shooters2 = [p for p in team2 if p.get("pos") != "G" and not p["injured"]]
@@ -238,7 +301,16 @@ class BattleSession:
                 else:
                     self._log_action(2, p, "буллит не забивает")
 
-    def simulate(self) -> Dict:
+    def play_period(self, tactic1: str | None = None, tactic2: str | None = None) -> None:
+        """Simulate a single period with optional tactic overrides."""
+        if tactic1:
+            self.tactic1 = tactic1 if tactic1 in TACTIC_MODIFIERS else self.tactic1
+        if tactic2:
+            self.tactic2 = tactic2 if tactic2 in TACTIC_MODIFIERS else self.tactic2
+
+        self.current_period += 1
+        self.log.append(f"📖 --- {self.current_period} Период ---")
+
         attack_mod1 = TACTIC_MODIFIERS[self.tactic1]["attack"]
         defense_mod1 = TACTIC_MODIFIERS[self.tactic1]["defense"]
         attack_mod2 = TACTIC_MODIFIERS[self.tactic2]["attack"]
@@ -246,70 +318,33 @@ class BattleSession:
         penalty1 = TACTIC_MODIFIERS[self.tactic1]["penalty"]
         penalty2 = TACTIC_MODIFIERS[self.tactic2]["penalty"]
 
-        for period in range(1, 4):
-            self.log.append(f"📖 --- {period} Период ---")
-            for _ in range(5):
-                # team1 attack
-                attacker_team1 = random.choice(self._attackers(self.team1))
-                goalie_team2 = self._goalie(self.team2)
-                if random.random() < 0.02:
-                    attacker_team1["injured"] = True
-                    self._log_action(1, attacker_team1, random.choice(INJURY_ACTIONS))
-                elif attacker_team1["strength"] < 25 and random.random() < 0.1 * penalty1:
-                    self._log_action(1, attacker_team1, random.choice(PENALTY_ACTIONS))
-                elif random.random() < 0.01:
-                    self._log_action(1, attacker_team1, random.choice(FIGHT_ACTIONS))
-                else:
-                    if self._attempt_goal(attacker_team1, goalie_team2, attack_mod1, defense_mod2):
-                        self.score["team1"] += 1
-                        self.contribution[attacker_team1["name"]] += 1
-                        self._log_action(1, attacker_team1, random.choice(GOAL_ACTIONS))
-                    else:
-                        self.contribution[goalie_team2["name"]] += 1
-                        r = random.random()
-                        if r < 0.1:
-                            self._log_action(1, attacker_team1, random.choice(POST_ACTIONS))
-                        elif r < 0.35:
-                            defender = self._defender(self.team2)
-                            self._log_action(2, defender, random.choice(BLOCK_ACTIONS))
-                        elif r < 0.55:
-                            self._log_action(1, attacker_team1, random.choice(MISS_ACTIONS))
-                        else:
-                            self._log_action(2, goalie_team2, random.choice(SAVE_ACTIONS))
-                # team2 attack
-                attacker_team2 = random.choice(self._attackers(self.team2))
-                goalie_team1 = self._goalie(self.team1)
-                if random.random() < 0.02:
-                    attacker_team2["injured"] = True
-                    self._log_action(2, attacker_team2, random.choice(INJURY_ACTIONS))
-                elif attacker_team2["strength"] < 25 and random.random() < 0.1 * penalty2:
-                    self._log_action(2, attacker_team2, random.choice(PENALTY_ACTIONS))
-                elif random.random() < 0.01:
-                    self._log_action(2, attacker_team2, random.choice(FIGHT_ACTIONS))
-                else:
-                    if self._attempt_goal(attacker_team2, goalie_team1, attack_mod2, defense_mod1):
-                        self.score["team2"] += 1
-                        self.contribution[attacker_team2["name"]] += 1
-                        self._log_action(2, attacker_team2, random.choice(GOAL_ACTIONS))
-                    else:
-                        self.contribution[goalie_team1["name"]] += 1
-                        r = random.random()
-                        if r < 0.1:
-                            self._log_action(2, attacker_team2, random.choice(POST_ACTIONS))
-                        elif r < 0.35:
-                            defender = self._defender(self.team1)
-                            self._log_action(1, defender, random.choice(BLOCK_ACTIONS))
-                        elif r < 0.55:
-                            self._log_action(2, attacker_team2, random.choice(MISS_ACTIONS))
-                        else:
-                            self._log_action(1, goalie_team1, random.choice(SAVE_ACTIONS))
-            self._apply_fatigue(self.team1)
-            self._apply_fatigue(self.team2)
+        self._simulate_period(attack_mod1, defense_mod1, attack_mod2, defense_mod2, penalty1, penalty2)
 
-        if self.score["team1"] == self.score["team2"]:
-            self.log.append("Ничья, серия буллитов")
-            self._shootout(self.team1, self.team2)
+    def play_overtime(self, tactic1: str, tactic2: str) -> bool:
+        """Run overtime. Return True if a goal was scored."""
+        if tactic1:
+            self.tactic1 = tactic1 if tactic1 in TACTIC_MODIFIERS else self.tactic1
+        if tactic2:
+            self.tactic2 = tactic2 if tactic2 in TACTIC_MODIFIERS else self.tactic2
 
+        self.log.append("⏱ Овертайм")
+
+        attack_mod1 = TACTIC_MODIFIERS[self.tactic1]["attack"]
+        defense_mod1 = TACTIC_MODIFIERS[self.tactic1]["defense"]
+        attack_mod2 = TACTIC_MODIFIERS[self.tactic2]["attack"]
+        defense_mod2 = TACTIC_MODIFIERS[self.tactic2]["defense"]
+        penalty1 = TACTIC_MODIFIERS[self.tactic1]["penalty"]
+        penalty2 = TACTIC_MODIFIERS[self.tactic2]["penalty"]
+
+        before = self.score.copy()
+        self._simulate_period(attack_mod1, defense_mod1, attack_mod2, defense_mod2, penalty1, penalty2)
+        return self.score != before
+
+    def shootout(self) -> None:
+        self.log.append("Буллиты")
+        self._shootout(self.team1, self.team2)
+
+    def finish(self) -> Dict:
         if self.score["team1"] > self.score["team2"]:
             winner = "team1"
         elif self.score["team2"] > self.score["team1"]:
@@ -332,3 +367,13 @@ class BattleSession:
             "mvp": mvp,
             "str_gap": self.str_gap,
         }
+
+    def simulate(self) -> Dict:
+        for _ in range(3):
+            self.play_period()
+
+        if self.score["team1"] == self.score["team2"]:
+            self.log.append("Ничья, серия буллитов")
+            self._shootout(self.team1, self.team2)
+
+        return self.finish()
