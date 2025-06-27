@@ -97,3 +97,54 @@ def format_period_summary(session: BattleSession) -> str:
         closing = ""
 
     return f"{title}\n{score_line}\n\n{event_text}\n{stat_line}\n\n{fan_or_expert}\n\n{closing}"
+
+
+def format_final_summary(session: BattleSession, result: dict, xp_gain: int, level: int, leveled_up: bool = False) -> str:
+    """Generate short final match summary."""
+    s1 = result.get("score", {}).get("team1", 0)
+    s2 = result.get("score", {}).get("team2", 0)
+    if result.get("winner") == "team1":
+        header = f"🏆 Матч завершён! Победа {session.name1} со счётом {s1} — {s2}"
+    elif result.get("winner") == "team2":
+        header = f"🏆 Матч завершён! Победа {session.name2} со счётом {s1} — {s2}"
+    else:
+        header = f"🏁 Матч завершён! Ничья {s1} — {s2}"
+
+    parts: List[str] = [header]
+
+    mvp = result.get("mvp")
+    if mvp:
+        player = next((p for p in session.team1 + session.team2 if p["name"] == mvp), {})
+        contrib = session.contribution.get(mvp, 0)
+        if (player.get("pos") or "").startswith("G"):
+            parts.append(f"🎯 Звезда матча: {mvp} — {contrib} сейвов")
+        else:
+            parts.append(f"🎯 Звезда матча: {mvp} — {contrib} очка")
+
+    goalies = [p for p in session.team1 + session.team2 if (p.get("pos") or "").startswith("G")]
+    if goalies:
+        best = max(goalies, key=lambda g: session.contribution.get(g["name"], 0))
+        saves = session.contribution.get(best["name"], 0)
+        team = session.name1 if best in session.team1 else session.name2
+        parts.append(f"🛡 {best['name']} ({team}) сделал {saves} сейвов — потрясающе!")
+
+    if random.random() < 0.15:
+        template = random.choice(MEME_CLIPS)
+    else:
+        template = random.choice(FAN_CLIPS + EXPERT_CLIPS)
+
+    if "{player}" in template:
+        name, team = _random_player(session)
+        parts.append(template.format(player=name, team=team, team1=session.name1, team2=session.name2))
+    elif "{goalie}" in template:
+        name, team = _random_goalie(session)
+        parts.append(template.format(goalie=name, team=team, team1=session.name1, team2=session.name2))
+    else:
+        parts.append(template.format(team=session.name1, team1=session.name1, team2=session.name2))
+
+    if leveled_up:
+        parts.append(f"🎖 Ты получаешь +{xp_gain} XP и переходишь на уровень {level}!")
+    else:
+        parts.append(f"🎖 +{xp_gain} XP")
+
+    return "\n\n".join(parts)
