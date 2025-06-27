@@ -37,7 +37,7 @@ async def fake_log(*a, **kw):
 def test_pvp_pairing(monkeypatch):
     handlers.PVP_QUEUE.clear()
     monkeypatch.setattr(handlers, '_build_team', lambda uid, ids=None: [])
-    monkeypatch.setattr(handlers, '_run_battle', lambda *a, **kw: asyncio.get_event_loop().create_task(fake_run()))
+    monkeypatch.setattr(handlers, '_start_pvp_duel', lambda *a, **kw: asyncio.get_event_loop().create_task(fake_run()))
     monkeypatch.setattr(handlers, 'apply_xp', lambda *a, **kw: asyncio.get_event_loop().create_task(fake_apply()))
     monkeypatch.setattr(handlers, '_start_log_view', lambda *a, **kw: asyncio.get_event_loop().create_task(fake_log()))
 
