@@ -369,11 +369,39 @@ class BattleSession:
         }
 
     def simulate(self) -> Dict:
-        for _ in range(3):
-            self.play_period()
+        """Run a full match using :class:`BattleController`."""
+        controller = BattleController(self)
+        return controller.auto_play()
 
-        if self.score["team1"] == self.score["team2"]:
-            self.log.append("Ничья, серия буллитов")
-            self._shootout(self.team1, self.team2)
 
-        return self.finish()
+class BattleController:
+    """Controller that manages battle phases for step-by-step matches."""
+
+    def __init__(self, session: BattleSession) -> None:
+        self.session = session
+        self.phase = "p1"
+
+    def step(self, tactic1: str, tactic2: str) -> None:
+        if self.phase == "p1":
+            self.session.play_period(tactic1, tactic2)
+            self.phase = "p2"
+        elif self.phase == "p2":
+            self.session.play_period(tactic1, tactic2)
+            self.phase = "p3"
+        elif self.phase == "p3":
+            self.session.play_period(tactic1, tactic2)
+            if self.session.score["team1"] == self.session.score["team2"]:
+                self.phase = "ot"
+            else:
+                self.phase = "end"
+        elif self.phase == "ot":
+            goal = self.session.play_overtime(tactic1, tactic2)
+            if not goal:
+                self.session.log.append("⛔️ Никто не забил. Буллиты.")
+                self.session.shootout()
+            self.phase = "end"
+
+    def auto_play(self) -> Dict:
+        while self.phase != "end":
+            self.step(self.session.tactic1, self.session.tactic2)
+        return self.session.finish()
