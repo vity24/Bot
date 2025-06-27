@@ -208,6 +208,7 @@ class BattleSession:
             "player": player.get("name"),
             "type": event_type,
             "text": line,
+            "period": self.current_period,
         })
 
     def _attempt_goal(self, attacker: Dict, goalie: Dict, attack_mod: float, defense_mod: float) -> bool:
@@ -238,7 +239,7 @@ class BattleSession:
                 if self._attempt_goal(attacker_team1, goalie_team2, attack_mod1, defense_mod2):
                     self.score["team1"] += 1
                     self.contribution[attacker_team1["name"]] += 1
-                    self.goals.append({"player": attacker_team1["name"], "team": self.name1})
+                    self.goals.append({"player": attacker_team1["name"], "team": self.name1, "period": self.current_period})
                     self._log_action(1, attacker_team1, random.choice(GOAL_ACTIONS), "goal")
                 else:
                     self.contribution[goalie_team2["name"]] += 1
@@ -266,7 +267,7 @@ class BattleSession:
                 if self._attempt_goal(attacker_team2, goalie_team1, attack_mod2, defense_mod1):
                     self.score["team2"] += 1
                     self.contribution[attacker_team2["name"]] += 1
-                    self.goals.append({"player": attacker_team2["name"], "team": self.name2})
+                    self.goals.append({"player": attacker_team2["name"], "team": self.name2, "period": self.current_period})
                     self._log_action(2, attacker_team2, random.choice(GOAL_ACTIONS), "goal")
                 else:
                     self.contribution[goalie_team1["name"]] += 1
@@ -300,7 +301,7 @@ class BattleSession:
                 if success:
                     self.score["team1"] += 1
                     self.contribution[p["name"]] += 1
-                    self.goals.append({"player": p["name"], "team": self.name1})
+                    self.goals.append({"player": p["name"], "team": self.name1, "period": self.current_period})
                     self._log_action(1, p, "буллит реализует", "goal")
                 else:
                     self._log_action(1, p, "буллит не забивает", "miss")
@@ -310,7 +311,7 @@ class BattleSession:
                 if success:
                     self.score["team2"] += 1
                     self.contribution[p["name"]] += 1
-                    self.goals.append({"player": p["name"], "team": self.name2})
+                    self.goals.append({"player": p["name"], "team": self.name2, "period": self.current_period})
                     self._log_action(2, p, "буллит реализует", "goal")
                 else:
                     self._log_action(2, p, "буллит не забивает", "miss")
@@ -342,6 +343,8 @@ class BattleSession:
             self.tactic2 = tactic2 if tactic2 in TACTIC_MODIFIERS else self.tactic2
 
         self.log.append("⏱ Овертайм")
+        # treat overtime as an additional period for event tracking
+        self.current_period = 4
 
         attack_mod1 = TACTIC_MODIFIERS[self.tactic1]["attack"]
         defense_mod1 = TACTIC_MODIFIERS[self.tactic1]["defense"]
@@ -356,6 +359,8 @@ class BattleSession:
 
     def shootout(self) -> None:
         self.log.append("Буллиты")
+        # mark shootout as separate period for logs
+        self.current_period = 5
         self._shootout(self.team1, self.team2)
 
     def finish(self) -> Dict:
