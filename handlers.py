@@ -145,6 +145,11 @@ PVP_QUEUE = OrderedDict()
 # Temporary storage for logs and scores by user id
 BATTLE_LOGS = {}
 
+# Active PvP duels mapped by a tuple of user ids
+ACTIVE_DUELS: dict[tuple[int, int], dict] = {}
+# Map user id to current duel key
+DUEL_USERS: dict[int, tuple[int, int]] = {}
+
 TACTICS = {
     "tactic_aggressive": "aggressive",
     "tactic_defensive": "defensive",
@@ -435,6 +440,73 @@ async def _run_battle(user_id, opponent_name, team1, team2, tactic1, tactic2, na
     return result
 
 
+async def _start_pvp_duel(uid1: int, uid2: int, team1, team2, name1: str, name2: str, context: ContextTypes.DEFAULT_TYPE):
+    """Initialize interactive PvP duel using ``BattleController``."""
+    session = BattleSession(team1, team2, name1=name1, name2=name2)
+    controller = BattleController(session)
+    duel_key = tuple(sorted((uid1, uid2)))
+    ACTIVE_DUELS[duel_key] = {"controller": controller, "choices": {}, "users": (uid1, uid2)}
+    DUEL_USERS[uid1] = duel_key
+    DUEL_USERS[uid2] = duel_key
+    keyboard = [
+        [InlineKeyboardButton("⚡️ Играть агрессивно", callback_data="battle_aggressive")],
+        [InlineKeyboardButton("🛡 Играть осторожно", callback_data="battle_defensive")],
+        [InlineKeyboardButton("🎯 Держать темп", callback_data="battle_balanced")],
+    ]
+    markup = InlineKeyboardMarkup(keyboard)
+    await context.bot.send_message(uid1, "⏱ Первый период. Выбери установку:", reply_markup=markup)
+    await context.bot.send_message(uid2, "⏱ Первый период. Выбери установку:", reply_markup=markup)
+
+
+async def _prompt_pvp_phase(state: dict, context: ContextTypes.DEFAULT_TYPE):
+    """Send tactic selection message for the current phase to both players."""
+    controller: BattleController = state["controller"]
+
+    def summary(lines):
+        return "\n".join(lines[-3:]) if lines else ""
+
+    phase = controller.phase
+    log = controller.session.log
+    score = controller.session.score
+
+    if phase == "p2":
+        text = (
+            f"{summary(log)}\nСчёт: {score['team1']} - {score['team2']}\n"
+            "⏱ Второй период: скорректируй стратегию"
+        )
+        keyboard = [
+            [InlineKeyboardButton("🔁 Сделать замену", callback_data="battle_change")],
+            [InlineKeyboardButton("⚔️ Уйти в атаку", callback_data="battle_attack")],
+            [InlineKeyboardButton("🛡 Укрепить оборону", callback_data="battle_defense")],
+        ]
+    elif phase == "p3":
+        mvp = max(controller.session.contribution.items(), key=lambda x: x[1])[0] if controller.session.contribution else ""
+        text = (
+            f"{summary(log)}\nСчёт: {score['team1']} - {score['team2']}\n"
+            f"MVP: {mvp}\n⏱ Третий период: заключительный выбор"
+        )
+        keyboard = [
+            [InlineKeyboardButton("⚡️ Давить до конца", callback_data="battle_pressure")],
+            [InlineKeyboardButton("⛔️ Уйти в оборону", callback_data="battle_hold")],
+            [InlineKeyboardButton("♻️ Играть на ничью", callback_data="battle_tie")],
+        ]
+    elif phase == "ot":
+        text = (
+            f"{summary(log)}\nСчёт: {score['team1']} - {score['team2']}\n"
+            "🟰 Ничья! Овертайм:"
+        )
+        keyboard = [
+            [InlineKeyboardButton("⚔️ Давим до гола!", callback_data="battle_ot_attack")],
+            [InlineKeyboardButton("🩻 Осторожно — ловим ошибку", callback_data="battle_ot_careful")],
+        ]
+    else:
+        return
+
+    markup = InlineKeyboardMarkup(keyboard)
+    for uid in state["users"]:
+        await context.bot.send_message(uid, text, reply_markup=markup)
+
+
 def _format_log_page(user_data):
     page = user_data.get("log_page", 0)
     log = user_data.get("log", [])
@@ -508,17 +580,7 @@ async def tactic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             opp_id, opp_data = opponents[0]
             PVP_QUEUE.pop(opp_id, None)
             PVP_QUEUE.pop(user_id, None)
-            result = await _run_battle(user_id, str(opp_id), team, opp_data["team"], tactic, opp_data["tactic"], team_name, opp_data["name"])
-            await apply_xp(user_id, result, False, context)
-            opp_result = result.copy()
-            if result.get("winner") == "team1":
-                opp_result["winner"] = "team2"
-            elif result.get("winner") == "team2":
-                opp_result["winner"] = "team1"
-            opp_result["str_gap"] = -result.get("str_gap", 0.0)
-            await apply_xp(opp_id, opp_result, False, context)
-            await _start_log_view(update.effective_user.id, result, context)
-            await _start_log_view(opp_id, result, context)
+            await _start_pvp_duel(user_id, opp_id, team, opp_data["team"], team_name, opp_data["name"], context)
         else:
             buttons = [
                 [InlineKeyboardButton(data.get("username", str(uid)), callback_data=f"challenge_{uid}")]
@@ -566,6 +628,9 @@ async def battle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle step-by-step battle choices for PvE matches."""
     query = update.callback_query
     await query.answer()
+    if query.from_user.id in DUEL_USERS:
+        await _handle_pvp_battle(update, context)
+        return
     state = context.user_data.get("battle_state")
     if not state:
         return
@@ -636,7 +701,7 @@ async def battle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]])
             )
             await _start_log_view(query.from_user.id, result, context)
-            state.clear()
+        state.clear()
     elif phase == "ot":
         tactic = "aggressive" if data == "battle_ot_attack" else "defensive"
         controller.step(tactic, random.choice(list(TACTICS.values())))
@@ -647,6 +712,64 @@ async def battle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await _start_log_view(query.from_user.id, result, context)
         state.clear()
+
+
+async def _handle_pvp_battle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    uid = query.from_user.id
+    duel_key = DUEL_USERS.get(uid)
+    state = ACTIVE_DUELS.get(duel_key)
+    if not state:
+        return
+
+    mapping = {
+        "battle_aggressive": "aggressive",
+        "battle_defensive": "defensive",
+        "battle_balanced": "balanced",
+        "battle_change": "balanced",
+        "battle_attack": "aggressive",
+        "battle_defense": "defensive",
+        "battle_pressure": "aggressive",
+        "battle_hold": "defensive",
+        "battle_tie": "balanced",
+        "battle_ot_attack": "aggressive",
+        "battle_ot_careful": "defensive",
+    }
+
+    tactic = mapping.get(query.data)
+    if tactic is None:
+        return
+
+    state["choices"][uid] = tactic
+    await query.edit_message_text("Ожидание соперника...")
+
+    if len(state["choices"]) < 2:
+        return
+
+    uid1, uid2 = state["users"]
+    t1 = state["choices"].pop(uid1)
+    t2 = state["choices"].pop(uid2)
+    controller: BattleController = state["controller"]
+    controller.step(t1, t2)
+
+    if controller.phase == "end":
+        result = controller.session.finish()
+        db.save_battle_result(uid1, str(uid2), result)
+        await apply_xp(uid1, result, False, context)
+        opp_result = result.copy()
+        if result.get("winner") == "team1":
+            opp_result["winner"] = "team2"
+        elif result.get("winner") == "team2":
+            opp_result["winner"] = "team1"
+        opp_result["str_gap"] = -result.get("str_gap", 0.0)
+        await apply_xp(uid2, opp_result, False, context)
+        await _start_log_view(uid1, result, context)
+        await _start_log_view(uid2, result, context)
+        DUEL_USERS.pop(uid1, None)
+        DUEL_USERS.pop(uid2, None)
+        ACTIVE_DUELS.pop(duel_key, None)
+    else:
+        await _prompt_pvp_phase(state, context)
 
 
 async def duel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -664,26 +787,15 @@ async def duel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         opp_data = PVP_QUEUE.pop(opp_id)
         my_data = PVP_QUEUE.pop(user_id)
-        result = await _run_battle(
+        await _start_pvp_duel(
             user_id,
-            str(opp_id),
+            opp_id,
             my_data["team"],
             opp_data["team"],
-            my_data["tactic"],
-            opp_data["tactic"],
             my_data["name"],
             opp_data["name"],
+            context,
         )
-        await apply_xp(user_id, result, False, context)
-        opp_result = result.copy()
-        if result.get("winner") == "team1":
-            opp_result["winner"] = "team2"
-        elif result.get("winner") == "team2":
-            opp_result["winner"] = "team1"
-        opp_result["str_gap"] = -result.get("str_gap", 0.0)
-        await apply_xp(opp_id, opp_result, False, context)
-        await _start_log_view(user_id, result, context)
-        await _start_log_view(opp_id, result, context)
         return
 
 async def show_battle_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
