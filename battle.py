@@ -353,13 +353,6 @@ class BattleSession:
             winner = "draw"
 
         mvp = max(self.contribution.items(), key=lambda x: x[1])[0] if self.contribution else ""
-        self.log.append(f"Финальный счёт: {self.score['team1']} - {self.score['team2']}")
-        if winner == "team1":
-            self.log.append(f"<b>Победа {self.name1}</b>")
-        elif winner == "team2":
-            self.log.append(f"<b>Победа {self.name2}</b>")
-        else:
-            self.log.append("<b>Ничья</b>")
         return {
             "winner": winner,
             "score": self.score,

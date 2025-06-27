@@ -9,7 +9,7 @@ from telegram.error import BadRequest
 from battle import BattleSession, BattleController
 import db_pg as db
 from helpers.leveling import level_from_xp, xp_to_next, calc_battle_xp
-from helpers.commentary import format_period_summary
+from helpers.commentary import format_period_summary, format_final_summary
 
 level_up_msg = "🆙 *Новый уровень!*  Ты достиг Lv {lvl}.\n🎁 Твой приз: {reward}"
 
@@ -47,10 +47,12 @@ async def apply_xp(uid: int, result: dict, opponent_is_bot: bool, context: Conte
     new_xp = old_xp + xp_gain
     new_lvl = level_from_xp(new_xp)
     db.update_xp(uid, new_xp, new_lvl, xp_gain)
-    if new_lvl > old_lvl:
+    leveled_up = new_lvl > old_lvl
+    if leveled_up:
         await grant_level_reward(uid, new_lvl, context)
     if xp_gain:
         await context.bot.send_message(uid, f"➕ +{xp_gain} XP", parse_mode="Markdown")
+    return xp_gain, new_lvl, leveled_up
 
 
 def _parse_points(stats: str | None, pos: str | None) -> float:
@@ -438,7 +440,7 @@ async def _run_battle(user_id, opponent_name, team1, team2, tactic1, tactic2, na
     controller = BattleController(session)
     result = await asyncio.to_thread(controller.auto_play)
     db.save_battle_result(user_id, opponent_name, result)
-    return result
+    return result, session
 
 
 async def _start_pvp_duel(uid1: int, uid2: int, team1, team2, name1: str, name2: str, context: ContextTypes.DEFAULT_TYPE):
@@ -586,8 +588,10 @@ async def tactic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         team1 = team
         team2 = await _build_team(0)
         tactic2 = random.choice(list(TACTICS.values()))
-        result = await _run_battle(user_id, "Bot", team1, team2, tactic, tactic2, team_name, "Bot")
-        await apply_xp(user_id, result, True, context)
+        result, session = await _run_battle(user_id, "Bot", team1, team2, tactic, tactic2, team_name, "Bot")
+        xp_gain, lvl, leveled = await apply_xp(user_id, result, True, context)
+        summary = format_final_summary(session, result, xp_gain, lvl, leveled)
+        await context.bot.send_message(user_id, summary, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]]))
         await _start_log_view(update.effective_user.id, result, context)
 
 async def show_log_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -685,8 +689,10 @@ async def battle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
         else:
             result = controller.session.finish()
+            xp_gain, lvl, up = await apply_xp(query.from_user.id, result, True, context)
+            summary_text = format_final_summary(controller.session, result, xp_gain, lvl, up)
             await query.edit_message_text(
-                f"{summary(controller.session.log)}\nФинальный счёт: {controller.session.score['team1']} - {controller.session.score['team2']}\nMVP: {result['mvp']}",
+                summary_text,
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]])
             )
             await _start_log_view(query.from_user.id, result, context)
@@ -695,8 +701,10 @@ async def battle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tactic = "aggressive" if data == "battle_ot_attack" else "defensive"
         controller.step(tactic, random.choice(list(TACTICS.values())))
         result = controller.session.finish()
+        xp_gain, lvl, up = await apply_xp(query.from_user.id, result, True, context)
+        summary_text = format_final_summary(controller.session, result, xp_gain, lvl, up)
         await query.edit_message_text(
-            f"{summary(controller.session.log)}\nФинальный счёт: {controller.session.score['team1']} - {controller.session.score['team2']}\nMVP: {result['mvp']}",
+            summary_text,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]])
         )
         await _start_log_view(query.from_user.id, result, context)
@@ -744,14 +752,18 @@ async def _handle_pvp_battle(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if controller.phase == "end":
         result = controller.session.finish()
         db.save_battle_result(uid1, str(uid2), result)
-        await apply_xp(uid1, result, False, context)
+        xp1, lvl1, up1 = await apply_xp(uid1, result, False, context)
         opp_result = result.copy()
         if result.get("winner") == "team1":
             opp_result["winner"] = "team2"
         elif result.get("winner") == "team2":
             opp_result["winner"] = "team1"
         opp_result["str_gap"] = -result.get("str_gap", 0.0)
-        await apply_xp(uid2, opp_result, False, context)
+        xp2, lvl2, up2 = await apply_xp(uid2, opp_result, False, context)
+        summary1 = format_final_summary(controller.session, result, xp1, lvl1, up1)
+        summary2 = format_final_summary(controller.session, opp_result, xp2, lvl2, up2)
+        await context.bot.send_message(uid1, summary1, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]]))
+        await context.bot.send_message(uid2, summary2, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]]))
         await _start_log_view(uid1, result, context)
         await _start_log_view(uid2, result, context)
         DUEL_USERS.pop(uid1, None)
