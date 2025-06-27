@@ -5,7 +5,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 TOKEN = os.getenv("BOT_TOKEN")
-URL = f"https://Vitaly24.pythonanywhere.com/webhook/{TOKEN}"
+BASE_URL = os.getenv("WEBHOOK_BASE", "Vitaly24.pythonanywhere.com")
 
-res = requests.get(f"https://api.telegram.org/bot{TOKEN}/setWebhook?url={URL}")
+url = f"https://{BASE_URL}/webhook/{TOKEN}"
+res = requests.get(f"https://api.telegram.org/bot{TOKEN}/setWebhook", params={"url": url})
 print(res.text)

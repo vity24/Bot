@@ -2418,7 +2418,7 @@ async def post_init(application: Application):
 def safe_polling(app):
     while True:
         try:
-            app.run_polling()
+            # app.run_polling()
         except NetworkError as e:
             logging.warning(f"Network error: {e}. Retrying in 10 sec...")
             time.sleep(10)
@@ -2483,7 +2483,7 @@ def main():
 
 
 
-    safe_polling(application)
+    # safe_polling(application)
 
 if __name__ == "__main__":
     import logging

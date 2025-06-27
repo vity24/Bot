@@ -1,21 +1,19 @@
 import os
-from flask import Flask, request
-from telegram import Update, Bot
-from telegram.ext import Application
 from dotenv import load_dotenv
+from quart import Quart, request
+from telegram import Update
+from telegram.ext import Application
 
-# Загрузка переменных
 load_dotenv()
 
 TOKEN = os.getenv("BOT_TOKEN")
-bot = Bot(TOKEN)
+
 application = Application.builder().token(TOKEN).build()
 
-app = Flask(__name__)
+app = Quart(__name__)
 
 @app.post(f"/webhook/{TOKEN}")
-async def webhook():
-    update_data = request.get_json(force=True)
-    update = Update.de_json(update_data, bot)
+async def telegram_webhook():
+    update = Update.de_json(await request.get_json(force=True), application.bot)
     await application.process_update(update)
     return "ok"
