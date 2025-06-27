@@ -345,6 +345,29 @@ async def start_fight(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await update.message.reply_text("Выбери тактику:", reply_markup=InlineKeyboardMarkup(keyboard))
 
+async def start_match(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начать пошаговый хоккейный матч."""
+    user_id = update.effective_user.id
+    context.user_data["match_state"] = {}
+    team_data = db.get_team(user_id)
+    team_name = team_data["name"] if team_data else "Team1"
+    team1 = await _build_team(user_id, team_data["lineup"] if team_data else None)
+    team2 = await _build_team(0)
+    session = BattleSession(team1, team2, name1=team_name, name2="Bot")
+    context.user_data["match_state"] = {
+        "session": session,
+        "phase": "p1",
+    }
+    keyboard = [
+        [InlineKeyboardButton("⚡️ Играть агрессивно", callback_data="match_aggressive")],
+        [InlineKeyboardButton("🛡 Играть осторожно", callback_data="match_defensive")],
+        [InlineKeyboardButton("🎯 Держать темп", callback_data="match_balanced")],
+    ]
+    await update.message.reply_text(
+        "⏱ Первый период. Выбери установку:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
 async def start_duel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["fight_mode"] = "pvp"
     keyboard = [
@@ -547,6 +570,101 @@ async def log_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         return
     await show_log_page(update, context)
+
+async def match_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    state = context.user_data.get("match_state")
+    if not state:
+        return
+    session: BattleSession = state["session"]
+    data = query.data
+
+    def summary(lines):
+        return "\n".join(lines[-3:]) if lines else ""
+
+    if state["phase"] == "p1":
+        tactic = data.split("_")[1]
+        session.play_period(tactic, random.choice(list(TACTICS.values())))
+        state["phase"] = "p2"
+        text = (
+            f"{summary(session.log)}\nСчёт: {session.score['team1']} - {session.score['team2']}\n"
+            "⏱ Второй период: скорректируй стратегию"
+        )
+        keyboard = [
+            [InlineKeyboardButton("🔁 Сделать замену", callback_data="match_change")],
+            [InlineKeyboardButton("⚔️ Уйти в атаку", callback_data="match_attack")],
+            [InlineKeyboardButton("🛡 Укрепить оборону", callback_data="match_defense")],
+        ]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    elif state["phase"] == "p2":
+        if data == "match_change":
+            tactic = "balanced"
+        elif data == "match_attack":
+            tactic = "aggressive"
+        else:
+            tactic = "defensive"
+        session.play_period(tactic, random.choice(list(TACTICS.values())))
+        state["phase"] = "p3"
+        mvp = max(session.contribution.items(), key=lambda x: x[1])[0] if session.contribution else ""
+        text = (
+            f"{summary(session.log)}\nСчёт: {session.score['team1']} - {session.score['team2']}\n"
+            f"MVP: {mvp}\n⏱ Третий период: заключительный выбор"
+        )
+        keyboard = [
+            [InlineKeyboardButton("⚡️ Давить до конца", callback_data="match_pressure")],
+            [InlineKeyboardButton("⛔️ Уйти в оборону", callback_data="match_hold")],
+            [InlineKeyboardButton("♻️ Играть на ничью", callback_data="match_tie")],
+        ]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    elif state["phase"] == "p3":
+        if data == "match_pressure":
+            tactic = "aggressive"
+        elif data == "match_hold":
+            tactic = "defensive"
+        else:
+            tactic = "balanced"
+        session.play_period(tactic, random.choice(list(TACTICS.values())))
+        if session.score["team1"] == session.score["team2"]:
+            state["phase"] = "ot"
+            text = (
+                f"{summary(session.log)}\nСчёт: {session.score['team1']} - {session.score['team2']}\n"
+                "🟰 Ничья! Овертайм:"
+            )
+            keyboard = [
+                [InlineKeyboardButton("⚔️ Давим до гола!", callback_data="match_ot_attack")],
+                [InlineKeyboardButton("🩻 Осторожно — ловим ошибку", callback_data="match_ot_careful")],
+            ]
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        else:
+            state["phase"] = "end"
+            result = session.finish()
+            await query.edit_message_text(
+                f"{summary(session.log)}\nФинальный счёт: {session.score['team1']} - {session.score['team2']}\nMVP: {result['mvp']}",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]])
+            )
+            await _start_log_view(query.from_user.id, result, context)
+    elif state["phase"] == "ot":
+        tactic = "aggressive" if data == "match_ot_attack" else "defensive"
+        goal = session.play_overtime(tactic, random.choice(list(TACTICS.values())))
+        if goal:
+            state["phase"] = "end"
+            result = session.finish()
+            await query.edit_message_text(
+                f"{summary(session.log)}\n🥅 ГОЛ! Победа в овертайме!\nФинальный счёт: {session.score['team1']} - {session.score['team2']}\nMVP: {result['mvp']}",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]])
+            )
+            await _start_log_view(query.from_user.id, result, context)
+        else:
+            session.log.append("⛔️ Никто не забил. Буллиты.")
+            session.shootout()
+            state["phase"] = "end"
+            result = session.finish()
+            await query.edit_message_text(
+                f"{summary(session.log)}\nФинальный счёт: {session.score['team1']} - {session.score['team2']}\nMVP: {result['mvp']}",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]])
+            )
+            await _start_log_view(query.from_user.id, result, context)
 
 async def duel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
