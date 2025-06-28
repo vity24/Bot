@@ -5,7 +5,6 @@ import re
 import time
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
-from telegram.error import BadRequest
 from battle import BattleSession, BattleController
 import db_pg as db
 from helpers.leveling import level_from_xp, xp_to_next, calc_battle_xp
@@ -142,12 +141,9 @@ def _get_user_cards_sync(user_id):
 async def get_user_cards(user_id):
     return await asyncio.to_thread(_get_user_cards_sync, user_id)
 
-LOG_LINES_PER_PAGE = 20
 # TTL for entries in PVP queue, seconds
 PVP_TTL = 600
 PVP_QUEUE = OrderedDict()
-# Temporary storage for logs and scores by user id
-BATTLE_LOGS = {}
 
 # Active PvP duels mapped by a tuple of user ids
 ACTIVE_DUELS: dict[tuple[int, int], dict] = {}
@@ -373,9 +369,6 @@ async def start_duel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = user.id
     tactic = "balanced"
 
-    # clear previous logs
-    ud = BATTLE_LOGS.setdefault(user_id, {})
-    ud.clear()
 
     team_data = db.get_team(user_id)
     team_name = team_data["name"] if team_data else "Team1"
@@ -543,23 +536,6 @@ async def _prompt_pvp_phase(state: dict, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(uid, text, reply_markup=markup)
 
 
-def _format_log_page(user_data):
-    page = user_data.get("log_page", 0)
-    log = user_data.get("log", [])
-    score = user_data.get("score", {"team1": 0, "team2": 0})
-    total_pages = max(1, (len(log) + LOG_LINES_PER_PAGE - 1) // LOG_LINES_PER_PAGE)
-    header = f"<b>🏒 {score['team1']} : {score['team2']} | стр. {page + 1}/{total_pages}</b>"
-    body_lines = log[page * LOG_LINES_PER_PAGE:(page + 1) * LOG_LINES_PER_PAGE]
-    body = "\n".join(body_lines)
-    buttons = []
-    if page > 0:
-        buttons.append(InlineKeyboardButton("◀️", callback_data="log_prev"))
-    if page < total_pages - 1:
-        buttons.append(InlineKeyboardButton("▶️", callback_data="log_next"))
-    buttons.append(InlineKeyboardButton("❌", callback_data="log_close"))
-    markup = InlineKeyboardMarkup([buttons])
-    return f"{header}\n{body}", markup
-
 
 async def _start_log_view(
     user_id: int,
@@ -569,16 +545,10 @@ async def _start_log_view(
     xp_gain: int = 0,
 ) -> None:
     """Send battle log to the user using premium formatting."""
-    ud = BATTLE_LOGS.setdefault(user_id, {})
-    ud.clear()
-    ud["log"] = generate_premium_log(session, result, xp_gain)
-    ud["score"] = result.get("score", {"team1": 0, "team2": 0})
-    ud["log_page"] = 0
-    text, markup = _format_log_page(ud)
+    text = generate_premium_log(session, result, xp_gain)
     await context.bot.send_message(
         user_id,
         text or "Нет логов",
-        reply_markup=markup,
         parse_mode="HTML",
     )
 
@@ -588,9 +558,6 @@ async def tactic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tactic = TACTICS.get(query.data, "balanced")
     mode = context.user_data.get("fight_mode", "pve")
     user_id = query.from_user.id
-    # clear previous logs
-    ud = BATTLE_LOGS.setdefault(user_id, {})
-    ud.clear()
     team_data = db.get_team(user_id)
     team_name = team_data["name"] if team_data else "Team1"
     team = await _build_team(user_id, team_data["lineup"] if team_data else None)
@@ -637,33 +604,6 @@ async def tactic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(user_id, summary, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]]))
         await _start_log_view(update.effective_user.id, result, session, context, xp_gain)
 
-async def show_log_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    ud = BATTLE_LOGS.get(update.effective_user.id, {})
-    text, markup = _format_log_page(ud)
-    try:
-        await update.callback_query.edit_message_text(
-            text or "Нет логов", reply_markup=markup, parse_mode="HTML"
-        )
-    except BadRequest:
-        # Message was probably deleted by user
-        pass
-
-async def log_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    ud = BATTLE_LOGS.setdefault(update.effective_user.id, {})
-    if query.data == "log_prev":
-        ud["log_page"] = max(0, ud.get("log_page", 0) - 1)
-    elif query.data == "log_next":
-        ud["log_page"] = ud.get("log_page", 0) + 1
-    elif query.data == "log_close":
-        BATTLE_LOGS.pop(update.effective_user.id, None)
-        try:
-            await query.message.delete()
-        except BadRequest:
-            # Ignore if message already deleted
-            pass
-        return
-    await show_log_page(update, context)
 
 async def battle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle step-by-step battle choices for PvE matches."""
