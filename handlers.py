@@ -9,7 +9,6 @@ from battle import BattleSession, BattleController
 import db_pg as db
 from helpers.leveling import level_from_xp, xp_to_next, calc_battle_xp
 from helpers.commentary import format_period_summary, format_final_summary
-from helpers.premium import generate_premium_log
 
 level_up_msg = "🆙 *Новый уровень!*  Ты достиг Lv {lvl}.\n🎁 Твой приз: {reward}"
 
@@ -466,14 +465,6 @@ async def _build_team(user_id, ids=None):
         })
     return team
 
-# Deprecated helper that produced verbose logs in earlier versions
-# async def _run_battle(user_id, opponent_name, team1, team2, tactic1, tactic2, name1="Team1", name2="Team2"):
-#     """Run a full battle automatically using ``BattleController``."""
-#     session = BattleSession(team1, team2, tactic1=tactic1, tactic2=tactic2, name1=name1, name2=name2)
-#     controller = BattleController(session)
-#     result = await asyncio.to_thread(controller.auto_play)
-#     db.save_battle_result(user_id, opponent_name, result)
-#     return result, session
 
 
 async def _start_pvp_duel(uid1: int, uid2: int, team1, team2, name1: str, name2: str, context: ContextTypes.DEFAULT_TYPE):
@@ -537,20 +528,6 @@ async def _prompt_pvp_phase(state: dict, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-async def _start_log_view(
-    user_id: int,
-    result: dict,
-    session: BattleSession,
-    context: ContextTypes.DEFAULT_TYPE,
-    xp_gain: int = 0,
-) -> None:
-    """Send battle log to the user using premium formatting."""
-    text = generate_premium_log(session, result, xp_gain)
-    await context.bot.send_message(
-        user_id,
-        text or "Нет логов",
-        parse_mode="HTML",
-    )
 
 async def tactic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query

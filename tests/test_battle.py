@@ -48,6 +48,23 @@ def test_no_draw_after_overtime():
     assert res['winner'] in {'team1', 'team2'}
 
 
+def test_overtime_sudden_death():
+    random.seed(4)
+    team1 = [make_player(i) for i in range(1, 7)]
+    team1[5]['pos'] = 'G'
+    team2 = [make_player(i) for i in range(7, 13)]
+    team2[5]['pos'] = 'G'
+    session = BattleSession(team1, team2)
+    controller = BattleController(session)
+    res = controller.auto_play()
+    ot_goals = [g for g in session.goals if g['period'] == 4]
+    assert len(ot_goals) <= 1
+    if ot_goals:
+        assert res['winner'] in {'team1', 'team2'}
+        # no events from shootout period when OT goal scored
+        assert not any(e for e in session.events if e.get('period') == 5)
+
+
 def test_mvp_based_on_stats():
     random.seed(3)
     team1 = [make_player(i) for i in range(1, 7)]
