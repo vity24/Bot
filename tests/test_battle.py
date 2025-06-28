@@ -86,3 +86,40 @@ def test_mvp_based_on_stats():
     max_saves = max(saves.values(), default=0)
     top_goalies = {n for n, s in saves.items() if s == max_saves and s > 0}
     assert res['mvp'] in top_scorers.union(top_goalies)
+
+
+def test_summary_shows_goals_for_field_player():
+    from helpers.commentary import format_final_summary
+
+    # create session with one scorer field player
+    team1 = [make_player(1)]
+    team2 = [make_player(2)]
+    session = BattleSession(team1, team2)
+    session.goals = [{"player": "P1", "team": "A", "period": 1}]
+    session.events = []
+    result = {"score": {"team1": 1, "team2": 0}, "mvp": "P1"}
+
+    summary = format_final_summary(session, result, 0, 1)
+    assert "P1" in summary
+    assert "1 гол" in summary
+
+
+def test_summary_shows_saves_for_goalie():
+    from helpers.commentary import format_final_summary
+
+    # goalie MVP with saves
+    gk = make_player(3)
+    gk['pos'] = 'G'
+    team1 = [gk]
+    team2 = [make_player(4)]
+    session = BattleSession(team1, team2)
+    session.goals = []
+    session.events = [
+        {"player": "P3", "type": "save"},
+        {"player": "P3", "type": "save"},
+    ]
+    result = {"score": {"team1": 0, "team2": 0}, "mvp": "P3"}
+
+    summary = format_final_summary(session, result, 0, 1)
+    assert "P3" in summary
+    assert "2 сейвов" in summary
