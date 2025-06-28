@@ -679,7 +679,7 @@ async def battle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]])
             )
             await _start_log_view(query.from_user.id, result, controller.session, context, xp_gain)
-        state.clear()
+            state.clear()
     elif phase == "ot":
         tactic = "aggressive" if data == "battle_ot_attack" else "defensive"
         controller.step(tactic, random.choice(list(TACTICS.values())))
