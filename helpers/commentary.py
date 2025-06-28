@@ -112,7 +112,7 @@ def format_period_summary(session: BattleSession) -> str:
 
 
 def format_final_summary(session: BattleSession, result: dict, xp_gain: int, level: int, leveled_up: bool = False) -> str:
-    """Generate concise final match summary."""
+    """Generate concise final match summary without XP details."""
     s1 = result.get("score", {}).get("team1", 0)
     s2 = result.get("score", {}).get("team2", 0)
     header = f"🏆 Матч окончен: <i>{session.name1}</i> {s1} — {s2} <i>{session.name2}</i>"
@@ -128,14 +128,7 @@ def format_final_summary(session: BattleSession, result: dict, xp_gain: int, lev
         goal_word = "гол" if goals == 1 else "гола"
         parts.append(f"🎯 Звезда матча: <b>{mvp}</b> — {goals} {goal_word}")
 
-    reason = "за отличную игру!"
-    if result.get("winner") in ("team1", "team2"):
-        top_goals = goals_by_player.get(mvp, 0)
-        if mvp and top_goals >= 2:
-            reason = f"за дубль {mvp} и уверенную победу!"
-        else:
-            reason = "за уверенную победу!"
-    parts.append(f"💎 +{xp_gain} XP {reason}")
-    parts.append("🎖 Рейтинг +1")
+
+    # XP reward is sent separately, so do not include it in the summary
 
     return "\n".join(parts)
