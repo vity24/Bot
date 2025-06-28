@@ -54,6 +54,14 @@ from helpers.leveling import xp_to_next
 from helpers import shorten_number, format_ranking_row, format_my_rank
 from helpers.styles import get_player_style
 from helpers.permissions import ADMINS, is_admin, admin_only
+from helpers.admin_utils import (
+    record_admin_usage,
+    admin_usage_log,
+    admin_usage_count,
+    admin_action_history,
+    banned_users,
+    online_users,
+)
 
 async def check_subscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -360,12 +368,6 @@ ISO3_TO_FLAG = {
 admin_no_cooldown = set()
 # Был ли когда-либо админом
 was_admin_before = set()
-# user_id -> set of used admin commands
-admin_usage_log: dict[int, set[str]] = {}
-
-def record_admin_usage(user_id: int, command: str) -> None:
-    """Log admin command usage."""
-    admin_usage_log.setdefault(user_id, set()).add(command)
 CARDS_PER_PAGE = 50
 
 # --- Для обменов ---
@@ -915,6 +917,9 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @require_subscribe
 async def card(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    if user_id in banned_users:
+        await update.message.reply_text("🚫 Вы заблокированы в боте.")
+        return
     now = int(time.time())
     conn = get_db()
     c = conn.cursor()
@@ -2201,6 +2206,7 @@ async def collection_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def myid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Твой Telegram user_id: {update.effective_user.id}")
 
+@admin_only
 async def whoisadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает информацию о пользователе и права администратора."""
     requester_id = update.effective_user.id
@@ -2325,6 +2331,13 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/giveallcards — выдать все недостающие\n"
         "/resetweek — обнулить недельный прирост\n"
         "/deletecard <имя> — удалить карту по имени\n"
+        "/ban <id> — заблокировать пользователя\n"
+        "/unban <id> — разблокировать пользователя\n"
+        "/logadmin — последние действия админов\n"
+        "/admintop — топ админов\n"
+        "/stats — статистика\n"
+        "/broadcast <текст> — рассылка\n"
+        "/whoonline — кто онлайн\n"
         "/whoisadmin <ID|@user> — информация об админах"
     )
     await update.message.reply_text(text, parse_mode="Markdown")
@@ -2544,11 +2557,146 @@ async def admin_remove_callback(update: Update, context: ContextTypes.DEFAULT_TY
     else:
         await query.answer("🤔 Этот пользователь уже не админ.", show_alert=True)
 
+
+@admin_only
+async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    record_admin_usage(user_id, "/ban")
+    if not context.args or not context.args[0].isdigit():
+        await update.message.reply_text("Укажите ID пользователя после команды.")
+        return
+    target = int(context.args[0])
+    banned_users.add(target)
+    await update.message.reply_text(f"Пользователь {target} заблокирован.")
+
+
+@admin_only
+async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    record_admin_usage(user_id, "/unban")
+    if not context.args or not context.args[0].isdigit():
+        await update.message.reply_text("Укажите ID пользователя после команды.")
+        return
+    target = int(context.args[0])
+    banned_users.discard(target)
+    await update.message.reply_text(f"Пользователь {target} разблокирован.")
+
+
+@admin_only
+async def logadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    record_admin_usage(user_id, "/logadmin")
+    conn = get_db()
+    c = conn.cursor()
+    entries = admin_action_history[-20:][::-1]
+    lines = []
+    for ts, uid, cmd in entries:
+        c.execute("SELECT username FROM users WHERE id=?", (uid,))
+        row = c.fetchone()
+        name = f"@{row[0]}" if row and row[0] else str(uid)
+        dt = datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+        lines.append(f"{dt} | {name} → {cmd}")
+    conn.close()
+    await update.message.reply_text("\n".join(lines) if lines else "Лог пуст.")
+
+
+@admin_only
+async def admintop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    record_admin_usage(user_id, "/admintop")
+    conn = get_db()
+    c = conn.cursor()
+    items = sorted(admin_usage_count.items(), key=lambda x: x[1], reverse=True)
+    lines = []
+    for i, (uid, cnt) in enumerate(items[:10], 1):
+        c.execute("SELECT username FROM users WHERE id=?", (uid,))
+        row = c.fetchone()
+        name = f"@{row[0]}" if row and row[0] else str(uid)
+        lines.append(f"{i}. {name} — {cnt}")
+    conn.close()
+    await update.message.reply_text("\n".join(lines) if lines else "Нет данных.")
+
+
+@admin_only
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    record_admin_usage(user_id, "/stats")
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM users")
+    total_users = c.fetchone()[0]
+    start_day = int(datetime.datetime.combine(datetime.date.today(), datetime.time.min).timestamp())
+    c.execute("SELECT COUNT(*) FROM inventory WHERE time_got >= ?", (start_day,))
+    packs_today = c.fetchone()[0]
+    c.execute("SELECT COUNT(*) FROM inventory")
+    total_cards = c.fetchone()[0]
+    c.execute("SELECT SUM(xp) FROM users")
+    total_xp = c.fetchone()[0] or 0
+    c.execute("SELECT COUNT(*) FROM battles")
+    total_battles = c.fetchone()[0]
+    conn.close()
+    text = (
+        f"Пользователей: {total_users}\n"
+        f"Паков сегодня: {packs_today}\n"
+        f"Карточек выдано: {total_cards}\n"
+        f"Начислено XP: {total_xp}\n"
+        f"Боёв проведено: {total_battles}"
+    )
+    await update.message.reply_text(text)
+
+
+@admin_only
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    record_admin_usage(user_id, "/broadcast")
+    if not context.args:
+        await update.message.reply_text("Укажите текст рассылки после команды.")
+        return
+    text = " ".join(context.args)
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT id FROM users")
+    ids = [row[0] for row in c.fetchall()]
+    conn.close()
+    sent = 0
+    for uid in ids:
+        try:
+            await context.bot.send_message(uid, text)
+            sent += 1
+        except Exception:
+            pass
+    await update.message.reply_text(f"Отправлено {sent} пользователям.")
+
+
+@admin_only
+async def whoonline(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    record_admin_usage(user_id, "/whoonline")
+    now = time.time()
+    active = [uid for uid, ts in online_users.items() if now - ts <= 600]
+    conn = get_db()
+    c = conn.cursor()
+    names = []
+    for uid in active:
+        c.execute("SELECT username FROM users WHERE id=?", (uid,))
+        row = c.fetchone()
+        names.append(f"@{row[0]}" if row and row[0] else str(uid))
+    conn.close()
+    if names:
+        await update.message.reply_text("Сейчас онлайн:\n" + "\n".join(names))
+    else:
+        await update.message.reply_text("Никого нет онлайн.")
+
 TEMP_DICTS = [
     pending_trades,
     trade_confirmations,
     admin_edit_state,
 ]
+
+async def track_user_activity(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Record last activity time for a user."""
+    if update.effective_user:
+        online_users[update.effective_user.id] = time.time()
 
 async def cleanup_expired(context: ContextTypes.DEFAULT_TYPE):
     now = time.time()
@@ -2559,6 +2707,10 @@ async def cleanup_expired(context: ContextTypes.DEFAULT_TYPE):
             if now - created > TTL:
                 d.pop(k, None)
     handlers.cleanup_pvp_queue()
+    # cleanup online users older than 10 minutes
+    for uid, ts in list(online_users.items()):
+        if now - ts > 600:
+            online_users.pop(uid, None)
 
 async def post_init(application: Application):
     bot_commands = [
@@ -2597,11 +2749,22 @@ def main():
     )
     application.job_queue.run_repeating(cleanup_expired, interval=3600)
 
+    # track user activity
+    application.add_handler(MessageHandler(filters.ALL, track_user_activity), group=0)
+    application.add_handler(CallbackQueryHandler(track_user_activity, pattern=".*"), group=0)
+
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("menu", menu))
     application.add_handler(CommandHandler("card", card))
     application.add_handler(CommandHandler("myid", myid))
     application.add_handler(CommandHandler("whoisadmin", whoisadmin))
+    application.add_handler(CommandHandler("ban", ban))
+    application.add_handler(CommandHandler("unban", unban))
+    application.add_handler(CommandHandler("logadmin", logadmin))
+    application.add_handler(CommandHandler("admintop", admintop))
+    application.add_handler(CommandHandler("stats", stats))
+    application.add_handler(CommandHandler("broadcast", broadcast))
+    application.add_handler(CommandHandler("whoonline", whoonline))
     application.add_handler(CommandHandler("nocooldown", nocooldown))
     application.add_handler(CommandHandler("deletecard", deletecard))
     application.add_handler(CommandHandler("giveallcards", giveallcards))
