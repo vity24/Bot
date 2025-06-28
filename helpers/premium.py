@@ -8,6 +8,20 @@ def generate_premium_log(session: BattleSession, result: dict, xp_gain: int = 85
     """Generate telecast-style premium log for the match."""
     lines: List[str] = []
 
+    # XP reward block
+    mvp = result.get("mvp")
+    goals_by_player = defaultdict(int)
+    for g in session.goals:
+        goals_by_player[g["player"]] += 1
+    reason = "за отличную игру!"
+    if result.get("winner") in ("team1", "team2"):
+        top_goals = goals_by_player.get(mvp, 0)
+        if mvp and top_goals >= 2:
+            reason = f"за дубль {mvp} и уверенную победу!"
+        else:
+            reason = "за уверенную победу!"
+    lines.append(f"💎 <b>+{xp_gain} XP {reason}</b>")
+
     # group goals by period to match scoreboard
     goals_by_period: DefaultDict[int, List[Dict]] = defaultdict(list)
     for g in session.goals:
@@ -54,7 +68,9 @@ def generate_premium_log(session: BattleSession, result: dict, xp_gain: int = 85
     # Final summary block
     s1 = result.get("score", {}).get("team1", 0)
     s2 = result.get("score", {}).get("team2", 0)
-    lines.append(f"🏆 Матч окончен: {session.name1} {s1} — {s2} {session.name2}")
+    lines.append(
+        f"🏆 Матч окончен: <i>{session.name1}</i> {s1} — {s2} <i>{session.name2}</i>"
+    )
     mvp = result.get("mvp")
     if mvp:
         goals = sum(1 for g in session.goals if g["player"] == mvp)
