@@ -225,6 +225,9 @@ class BattleSession:
                          attack_mod2: float, defense_mod2: float,
                          penalty1: float, penalty2: float) -> None:
         """Run one period of the match."""
+        max_goals = 5 if random.random() < 0.05 else 3
+        goals1 = 0
+        goals2 = 0
         for _ in range(5):
             attacker_team1 = random.choice(self._attackers(self.team1))
             goalie_team2 = self._goalie(self.team2)
@@ -236,8 +239,9 @@ class BattleSession:
             elif random.random() < 0.01:
                 self._log_action(1, attacker_team1, random.choice(FIGHT_ACTIONS), "fight")
             else:
-                if self._attempt_goal(attacker_team1, goalie_team2, attack_mod1, defense_mod2):
+                if goals1 < max_goals and self._attempt_goal(attacker_team1, goalie_team2, attack_mod1, defense_mod2):
                     self.score["team1"] += 1
+                    goals1 += 1
                     self.contribution[attacker_team1["name"]] += 1
                     self.goals.append({"player": attacker_team1["name"], "team": self.name1, "period": self.current_period})
                     self._log_action(1, attacker_team1, random.choice(GOAL_ACTIONS), "goal")
@@ -264,8 +268,9 @@ class BattleSession:
             elif random.random() < 0.01:
                 self._log_action(2, attacker_team2, random.choice(FIGHT_ACTIONS), "fight")
             else:
-                if self._attempt_goal(attacker_team2, goalie_team1, attack_mod2, defense_mod1):
+                if goals2 < max_goals and self._attempt_goal(attacker_team2, goalie_team1, attack_mod2, defense_mod1):
                     self.score["team2"] += 1
+                    goals2 += 1
                     self.contribution[attacker_team2["name"]] += 1
                     self.goals.append({"player": attacker_team2["name"], "team": self.name2, "period": self.current_period})
                     self._log_action(2, attacker_team2, random.choice(GOAL_ACTIONS), "goal")
@@ -281,6 +286,9 @@ class BattleSession:
                         self._log_action(2, attacker_team2, random.choice(MISS_ACTIONS), "miss")
                     else:
                         self._log_action(1, goalie_team1, random.choice(SAVE_ACTIONS), "save")
+
+            if goals1 >= max_goals and goals2 >= max_goals:
+                break
 
         self._apply_fatigue(self.team1)
         self._apply_fatigue(self.team2)
