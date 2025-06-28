@@ -4,7 +4,7 @@ from collections import defaultdict
 from battle import BattleSession
 
 
-def generate_premium_log(session: BattleSession, result: dict, xp_gain: int = 85, rating_delta: int = 1) -> List[str]:
+def generate_premium_log(session: BattleSession, result: dict, xp_gain: int = 85, rating_delta: int = 1) -> str:
     """Generate telecast-style premium log for the match."""
     lines: List[str] = []
 
@@ -78,4 +78,4 @@ def generate_premium_log(session: BattleSession, result: dict, xp_gain: int = 85
         lines.append(f"🎯 Звезда матча: <b>{mvp}</b> — {goals} {goal_word}")
     lines.append(f"🎖 +{xp_gain} XP, рейтинг +{rating_delta}")
 
-    return lines
+    return "\n".join(lines)

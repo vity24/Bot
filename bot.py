@@ -2476,7 +2476,6 @@ def main():
     application.add_handler(CallbackQueryHandler(handlers.tactic_callback, pattern="^tactic_"))
     application.add_handler(CallbackQueryHandler(handlers.battle_callback, pattern="^battle_"))
     application.add_handler(CallbackQueryHandler(handlers.duel_callback, pattern="^(challenge_\\d+|duel_cancel)$"))
-    application.add_handler(CallbackQueryHandler(handlers.log_callback, pattern="^log_(prev|next|close)$"))
 
 
 
