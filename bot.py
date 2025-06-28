@@ -357,6 +357,8 @@ ISO3_TO_FLAG = {
 }
 
 admin_no_cooldown = set()
+# Был ли когда-либо админом
+was_admin_before = set()
 CARDS_PER_PAGE = 50
 
 # --- Для обменов ---
@@ -2191,6 +2193,61 @@ async def collection_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def myid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Твой Telegram user_id: {update.effective_user.id}")
 
+async def whoisadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает информацию о пользователе и права администратора."""
+    requester_id = update.effective_user.id
+
+    if context.args and context.args[0].isdigit():
+        uid = int(context.args[0])
+    else:
+        uid = requester_id
+
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT username FROM users WHERE id=?", (uid,))
+    row = c.fetchone()
+    conn.close()
+    username = row[0] if row else None
+
+    xp, lvl = db.get_xp_level(uid)
+    cap = xp + xp_to_next(xp)
+    rank, total = await get_user_rank_cached(uid)
+
+    in_admins = uid in ADMINS
+    no_cd = uid in admin_no_cooldown
+    has_panel = is_admin(uid)
+    passes_sub = True if has_panel else await is_user_subscribed(context.bot, uid)
+
+    lines = [
+        f"👤 ID: {uid}",
+        f"🔗 Username: @{username}" if username else "🔗 Username: —",
+        "",
+        "🔍 Права:",
+        f"• В ADMINS: {'✅' if in_admins else '❌'}",
+        f"• В admin_no_cooldown: {'✅' if no_cd else '❌'}",
+        f"• Админ-панель доступна: {'✅' if has_panel else '❌'}",
+        f"• Проходит подписку без проверки: {'✅' if passes_sub else '❌'}",
+    ]
+
+    if uid in was_admin_before:
+        lines.append("\n🕰 Был админом ранее")
+
+    lines.extend([
+        "",
+        f"📈 Уровень: {lvl}  | XP: {xp} / {cap}",
+        f"🏆 Рейтинг: #{rank} из {total}",
+    ])
+
+    markup = None
+    if is_admin(requester_id) and in_admins:
+        markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Удалить из ADMINS", callback_data=f"remove_admin_{uid}")]
+        ])
+        lines.append("\n⚠️ Рекомендация: если это неадмин — нажми \"Удалить\"")
+
+    text = "\n".join(lines)
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=markup)
+
 @admin_only
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show available admin commands."""
@@ -2392,7 +2449,25 @@ async def admin_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         conn.close()
         refresh_card_cache(card_id)
         await update.message.reply_text(f"✅ Поле <b>stats</b> карточки <b>{name}</b> обновлено на: <code>{new_stats}</code>", parse_mode='HTML')
-        admin_edit_state.pop(user_id, None)
+    admin_edit_state.pop(user_id, None)
+
+async def admin_remove_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    if not is_admin(user_id):
+        await query.answer("Недостаточно прав", show_alert=True)
+        return
+    target_id = int(query.data.split("_")[-1])
+    if target_id in ADMINS:
+        ADMINS.remove(target_id)
+        was_admin_before.add(target_id)
+        text = query.message.text
+        if "✅ Удалён" not in text:
+            text += "\n\n✅ Удалён"
+        await query.edit_message_text(text, parse_mode="Markdown")
+        await query.answer("Удалён")
+    else:
+        await query.answer("Уже удалён", show_alert=True)
 
 TEMP_DICTS = [
     pending_trades,
@@ -2451,6 +2526,7 @@ def main():
     application.add_handler(CommandHandler("menu", menu))
     application.add_handler(CommandHandler("card", card))
     application.add_handler(CommandHandler("myid", myid))
+    application.add_handler(CommandHandler("whoisadmin", whoisadmin))
     application.add_handler(CommandHandler("nocooldown", nocooldown))
     application.add_handler(CommandHandler("deletecard", deletecard))
     application.add_handler(CommandHandler("giveallcards", giveallcards))
@@ -2478,6 +2554,7 @@ def main():
     application.add_handler(CommandHandler("team", handlers.create_team))
     application.add_handler(CallbackQueryHandler(handlers.team_callback, pattern="^team_"))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handlers.team_text_handler))
+    application.add_handler(CallbackQueryHandler(admin_remove_callback, pattern="^remove_admin_\d+$"))
     application.add_handler(CallbackQueryHandler(open_team, pattern="^open_team$"))
     application.add_handler(CommandHandler("fight", handlers.start_fight))
     application.add_handler(CommandHandler("duel", handlers.start_duel))
