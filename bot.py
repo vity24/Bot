@@ -2751,11 +2751,11 @@ def main():
 
     # track user activity
     application.add_handler(
-        MessageHandler(filters.ALL, track_user_activity, block=False), group=0
+        MessageHandler(filters.ALL, track_user_activity, block=False), group=20
     )
     application.add_handler(
         CallbackQueryHandler(track_user_activity, pattern=".*", block=False),
-        group=0,
+        group=20,
     )
 
     application.add_handler(CommandHandler("start", start))
