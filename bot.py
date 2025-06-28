@@ -45,6 +45,7 @@ from telegram import (
     Update,
     InputMediaPhoto,
 )
+from telegram.helpers import escape_markdown
 from collections import Counter
 from functools import wraps
 import handlers
@@ -2234,7 +2235,11 @@ async def whoisadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             c.execute("SELECT username FROM users WHERE id=?", (user_id,))
             row = c.fetchone()
             username = row[0] if row else None
-            cmds = sorted(admin_usage_log.get(user_id, []))
+            if username:
+                username = escape_markdown(username, version=1)
+            cmds = sorted(
+                escape_markdown(cmd, version=1) for cmd in admin_usage_log.get(user_id, [])
+            )
             name = f"@{username}" if username else "—"
             lines.append(f"👤 ID: {user_id} | {name}")
             used = ", ".join(cmds) if cmds else "—"
@@ -2263,6 +2268,8 @@ async def whoisadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     row = c.fetchone()
     conn.close()
     username = row[0] if row else None
+    if username:
+        username = escape_markdown(username, version=1)
 
     xp, lvl = db.get_xp_level(uid)
     cap = xp + xp_to_next(xp)
@@ -2272,7 +2279,7 @@ async def whoisadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     no_cd = uid in admin_no_cooldown
     has_panel = is_admin(uid)
     passes_sub = True if has_panel else await is_user_subscribed(context.bot, uid)
-    used_cmds = sorted(admin_usage_log.get(uid, []))
+    used_cmds = sorted(escape_markdown(cmd, version=1) for cmd in admin_usage_log.get(uid, []))
 
     lines = [
         f"👤 ID: {uid}",
