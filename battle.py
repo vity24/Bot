@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import random
 from collections import defaultdict
-from typing import List, Dict
+from typing import List, Dict, DefaultDict
 
 CURRENT_YEAR = 2024
 
@@ -290,31 +290,39 @@ class BattleSession:
         shooters2 = [p for p in team2 if p.get("pos") != "G" and not p["injured"]]
         random.shuffle(shooters1)
         random.shuffle(shooters2)
-        shooters1 = shooters1[:3]
-        shooters2 = shooters2[:3]
-        g1 = self._goalie(team1)
-        g2 = self._goalie(team2)
-        for i in range(3):
+        shooters1 = shooters1[:3] or [p for p in team1 if p.get("pos") != "G"]
+        shooters2 = shooters2[:3] or [p for p in team2 if p.get("pos") != "G"]
+        i = 0
+        while True:
             if i < len(shooters1):
-                p = shooters1[i]
-                success = random.random() < p["tech"] * 0.7
-                if success:
-                    self.score["team1"] += 1
-                    self.contribution[p["name"]] += 1
-                    self.goals.append({"player": p["name"], "team": self.name1, "period": self.current_period})
-                    self._log_action(1, p, "буллит реализует", "goal")
-                else:
-                    self._log_action(1, p, "буллит не забивает", "miss")
+                p1 = shooters1[i]
+            else:
+                p1 = random.choice(shooters1)
+            success = random.random() < p1["tech"] * 0.7
+            if success:
+                self.score["team1"] += 1
+                self.contribution[p1["name"]] += 1
+                self.goals.append({"player": p1["name"], "team": self.name1, "period": self.current_period})
+                self._log_action(1, p1, "буллит реализует", "goal")
+            else:
+                self._log_action(1, p1, "буллит не забивает", "miss")
+
             if i < len(shooters2):
-                p = shooters2[i]
-                success = random.random() < p["tech"] * 0.7
-                if success:
-                    self.score["team2"] += 1
-                    self.contribution[p["name"]] += 1
-                    self.goals.append({"player": p["name"], "team": self.name2, "period": self.current_period})
-                    self._log_action(2, p, "буллит реализует", "goal")
-                else:
-                    self._log_action(2, p, "буллит не забивает", "miss")
+                p2 = shooters2[i]
+            else:
+                p2 = random.choice(shooters2)
+            success = random.random() < p2["tech"] * 0.7
+            if success:
+                self.score["team2"] += 1
+                self.contribution[p2["name"]] += 1
+                self.goals.append({"player": p2["name"], "team": self.name2, "period": self.current_period})
+                self._log_action(2, p2, "буллит реализует", "goal")
+            else:
+                self._log_action(2, p2, "буллит не забивает", "miss")
+
+            i += 1
+            if i >= 3 and self.score["team1"] != self.score["team2"]:
+                break
 
     def play_period(self, tactic1: str | None = None, tactic2: str | None = None) -> None:
         """Simulate a single period with optional tactic overrides."""
@@ -371,7 +379,23 @@ class BattleSession:
         else:
             winner = "draw"
 
-        mvp = max(self.contribution.items(), key=lambda x: x[1])[0] if self.contribution else ""
+        players = {p["name"]: p for p in self.team1 + self.team2}
+
+        goals_by_player: DefaultDict[str, int] = defaultdict(int)
+        for g in self.goals:
+            goals_by_player[g["player"]] += 1
+        max_goals = max(goals_by_player.values(), default=0)
+        top_scorers = [n for n, g in goals_by_player.items() if g == max_goals and g > 0]
+
+        saves_by_player: DefaultDict[str, int] = defaultdict(int)
+        for e in self.events:
+            if e.get("type") == "save" and players.get(e["player"], {}).get("pos") == "G":
+                saves_by_player[e["player"]] += 1
+        max_saves = max(saves_by_player.values(), default=0)
+        top_goalies = [n for n, s in saves_by_player.items() if s == max_saves and s > 0]
+
+        candidates = set(top_scorers + top_goalies)
+        mvp = random.choice(list(candidates)) if candidates else ""
         return {
             "winner": winner,
             "score": self.score,
@@ -409,8 +433,8 @@ class BattleController:
             else:
                 self.phase = "end"
         elif self.phase == "ot":
-            goal = self.session.play_overtime(tactic1, tactic2)
-            if not goal:
+            self.session.play_overtime(tactic1, tactic2)
+            if self.session.score["team1"] == self.session.score["team2"]:
                 self.session.log.append("⛔️ Никто не забил. Буллиты.")
                 self.session.shootout()
             self.phase = "end"
