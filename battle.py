@@ -223,8 +223,9 @@ class BattleSession:
 
     def _simulate_period(self, attack_mod1: float, defense_mod1: float,
                          attack_mod2: float, defense_mod2: float,
-                         penalty1: float, penalty2: float) -> None:
-        """Run one period of the match."""
+                         penalty1: float, penalty2: float,
+                         sudden_death: bool = False) -> bool:
+        """Run one period of the match. Return True if a goal was scored."""
         for _ in range(5):
             attacker_team1 = random.choice(self._attackers(self.team1))
             goalie_team2 = self._goalie(self.team2)
@@ -241,6 +242,10 @@ class BattleSession:
                     self.contribution[attacker_team1["name"]] += 1
                     self.goals.append({"player": attacker_team1["name"], "team": self.name1, "period": self.current_period})
                     self._log_action(1, attacker_team1, random.choice(GOAL_ACTIONS), "goal")
+                    if sudden_death:
+                        self._apply_fatigue(self.team1)
+                        self._apply_fatigue(self.team2)
+                        return True
                 else:
                     self.contribution[goalie_team2["name"]] += 1
                     r = random.random()
@@ -269,6 +274,10 @@ class BattleSession:
                     self.contribution[attacker_team2["name"]] += 1
                     self.goals.append({"player": attacker_team2["name"], "team": self.name2, "period": self.current_period})
                     self._log_action(2, attacker_team2, random.choice(GOAL_ACTIONS), "goal")
+                    if sudden_death:
+                        self._apply_fatigue(self.team1)
+                        self._apply_fatigue(self.team2)
+                        return True
                 else:
                     self.contribution[goalie_team1["name"]] += 1
                     r = random.random()
@@ -284,6 +293,7 @@ class BattleSession:
 
         self._apply_fatigue(self.team1)
         self._apply_fatigue(self.team2)
+        return False
 
     def _shootout(self, team1: List[Dict], team2: List[Dict]):
         shooters1 = [p for p in team1 if p.get("pos") != "G" and not p["injured"]]
@@ -341,7 +351,14 @@ class BattleSession:
         penalty1 = TACTIC_MODIFIERS[self.tactic1]["penalty"]
         penalty2 = TACTIC_MODIFIERS[self.tactic2]["penalty"]
 
-        self._simulate_period(attack_mod1, defense_mod1, attack_mod2, defense_mod2, penalty1, penalty2)
+        self._simulate_period(
+            attack_mod1,
+            defense_mod1,
+            attack_mod2,
+            defense_mod2,
+            penalty1,
+            penalty2,
+        )
 
     def play_overtime(self, tactic1: str, tactic2: str) -> bool:
         """Run overtime. Return True if a goal was scored."""
@@ -361,9 +378,15 @@ class BattleSession:
         penalty1 = TACTIC_MODIFIERS[self.tactic1]["penalty"]
         penalty2 = TACTIC_MODIFIERS[self.tactic2]["penalty"]
 
-        before = self.score.copy()
-        self._simulate_period(attack_mod1, defense_mod1, attack_mod2, defense_mod2, penalty1, penalty2)
-        return self.score != before
+        return self._simulate_period(
+            attack_mod1,
+            defense_mod1,
+            attack_mod2,
+            defense_mod2,
+            penalty1,
+            penalty2,
+            sudden_death=True,
+        )
 
     def shootout(self) -> None:
         self.log.append("Буллиты")
@@ -405,11 +428,6 @@ class BattleSession:
         }
 
 
-    # Deprecated old simulation helper that returned verbose logs
-    # def simulate(self) -> Dict:
-    #     """Run a full match using :class:`BattleController`."""
-    #     controller = BattleController(self)
-    #     return controller.auto_play()
 
 
 class BattleController:
