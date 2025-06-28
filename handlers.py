@@ -533,7 +533,7 @@ async def _prompt_pvp_phase(state: dict, context: ContextTypes.DEFAULT_TYPE):
 
     markup = InlineKeyboardMarkup(keyboard)
     for uid in state["users"]:
-        await context.bot.send_message(uid, text, reply_markup=markup)
+        await context.bot.send_message(uid, text, reply_markup=markup, parse_mode="HTML")
 
 
 
@@ -642,7 +642,7 @@ async def battle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("⚔️ Уйти в атаку", callback_data="battle_attack")],
             [InlineKeyboardButton("🛡 Укрепить оборону", callback_data="battle_defense")],
         ]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
     elif phase == "p2":
         if data == "battle_change":
             tactic = "balanced"
@@ -657,7 +657,7 @@ async def battle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("⛔️ Уйти в оборону", callback_data="battle_hold")],
             [InlineKeyboardButton("♻️ Играть на ничью", callback_data="battle_tie")],
         ]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
     elif phase == "p3":
         if data == "battle_pressure":
             tactic = "aggressive"
@@ -675,7 +675,7 @@ async def battle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("⚔️ Давим до гола!", callback_data="battle_ot_attack")],
                 [InlineKeyboardButton("🩻 Осторожно — ловим ошибку", callback_data="battle_ot_careful")],
             ]
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
         else:
             result = controller.session.finish()
             xp_gain, lvl, up = await apply_xp(query.from_user.id, result, True, context)
