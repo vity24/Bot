@@ -758,7 +758,10 @@ async def me(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text,
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("📜 Посмотреть историю боёв", callback_data="menu_history")]]
+            [
+                [InlineKeyboardButton("⚙ Управление командой", callback_data="open_team")],
+                [InlineKeyboardButton("📜 Посмотреть историю боёв", callback_data="menu_history")],
+            ]
         ),
     )
 
@@ -805,6 +808,12 @@ async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = "\n".join(lines).rstrip()
     await _send_rank_text(update, text)
+
+
+@require_subscribe
+async def open_team(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Open team management via callback."""
+    await _call_with_query_message(handlers.create_team, update, context)
 
 @require_subscribe
 
@@ -2469,6 +2478,7 @@ def main():
     application.add_handler(CommandHandler("team", handlers.create_team))
     application.add_handler(CallbackQueryHandler(handlers.team_callback, pattern="^team_"))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handlers.team_text_handler))
+    application.add_handler(CallbackQueryHandler(open_team, pattern="^open_team$"))
     application.add_handler(CommandHandler("fight", handlers.start_fight))
     application.add_handler(CommandHandler("duel", handlers.start_duel))
     application.add_handler(CommandHandler("duel_list", handlers.duel_list))
