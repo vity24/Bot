@@ -551,6 +551,13 @@ async def _start_log_view(
         text or "Нет логов",
         parse_mode="HTML",
     )
+    await context.bot.send_message(
+        user_id,
+        "✨ Что дальше?",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]]
+        ),
+    )
 
 async def tactic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
