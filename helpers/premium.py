@@ -73,9 +73,18 @@ def generate_premium_log(session: BattleSession, result: dict, xp_gain: int = 85
     )
     mvp = result.get("mvp")
     if mvp:
-        goals = sum(1 for g in session.goals if g["player"] == mvp)
-        goal_word = "гол" if goals == 1 else "гола"
-        lines.append(f"🎯 Звезда матча: <b>{mvp}</b> — {goals} {goal_word}")
+        players = {p["name"]: p for p in session.team1 + session.team2}
+        if players.get(mvp, {}).get("pos") == "G":
+            saves = sum(
+                1
+                for e in session.events
+                if e.get("type") == "save" and e.get("player") == mvp
+            )
+            lines.append(f"🎯 Звезда матча: <b>{mvp}</b> — {saves} сейвов")
+        else:
+            goals = sum(1 for g in session.goals if g["player"] == mvp)
+            goal_word = "гол" if goals == 1 else "гола"
+            lines.append(f"🎯 Звезда матча: <b>{mvp}</b> — {goals} {goal_word}")
 
     # XP and rating changes are delivered separately
 
