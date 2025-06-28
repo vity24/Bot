@@ -175,6 +175,46 @@ RARITY_RU_SHORT = {
 
 TEAM_PAGE = 10
 
+# order and labels for team slots
+SLOT_ORDER = ["g", "d1", "d2", "f1", "f2", "f3", "b1", "b2", "b3"]
+SLOT_LABELS = {
+    "g": "🥅 G",
+    "d1": "🛡 D1",
+    "d2": "🛡 D2",
+    "f1": "🚀 F1",
+    "f2": "🚀 F2",
+    "f3": "🚀 F3",
+    "b1": "🪑 Запас1",
+    "b2": "🪑 Запас2",
+    "b3": "🪑 Запас3",
+}
+
+# mapping from slot id to storage location
+SLOT_MAP = {
+    "g": ("lineup", 0),
+    "d1": ("lineup", 1),
+    "d2": ("lineup", 2),
+    "f1": ("lineup", 3),
+    "f2": ("lineup", 4),
+    "f3": ("lineup", 5),
+    "b1": ("bench", 0),
+    "b2": ("bench", 1),
+    "b3": ("bench", 2),
+}
+
+# filtering for card positions by slot
+SLOT_FILTER = {
+    "g": "G",
+    "d1": "D",
+    "d2": "D",
+    "f1": "F",
+    "f2": "F",
+    "f3": "F",
+    "b1": "ANY",
+    "b2": "ANY",
+    "b3": "ANY",
+}
+
 
 def get_card_name(card_id: int) -> str:
     conn = db.get_db()
@@ -264,8 +304,9 @@ async def team_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Такое имя уже используется. Попробуйте другое.")
             return
         tb["name"] = name
-        tb["step"] = "select"
-        tb["selected"] = []
+        tb["step"] = "slots"
+        tb["lineup"] = [None] * 6
+        tb["bench"] = [None] * 3
         tb["page"] = 0
         context.user_data["team_build"] = tb
         await send_team_page(update.message.chat_id, update.effective_user.id, context)
@@ -287,9 +328,10 @@ async def team_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def send_team_page(chat_id, user_id, context, edit=False, message_id=None):
     tb = context.user_data.get("team_build", {})
+    step = tb.get("step")
     page = tb.get("page", 0)
-    selected = tb.get("selected", [])
     cards = {c["id"]: c for c in await get_user_cards(user_id)}
+
     if not cards:
         await context.bot.send_message(
             chat_id=chat_id,
@@ -297,29 +339,80 @@ async def send_team_page(chat_id, user_id, context, edit=False, message_id=None)
         )
         context.user_data.pop("team_build", None)
         return
-    ids = list(cards.keys())
-    total_pages = (len(ids) + TEAM_PAGE - 1) // TEAM_PAGE
-    page_cards = ids[page * TEAM_PAGE:(page + 1) * TEAM_PAGE]
+
+    if step == "select_card":
+        slot = tb.get("slot")
+        list_name, idx = SLOT_MAP.get(slot, ("lineup", 0))
+        current = tb.get(list_name, [None])[idx]
+        selected_ids = set(x for x in tb.get("lineup", []) + tb.get("bench", []) if x)
+        selected_ids.discard(current)
+        filtered = []
+        for c in cards.values():
+            if c["id"] in selected_ids:
+                continue
+            pos = (c.get("pos") or "").upper()
+            flt = SLOT_FILTER.get(slot)
+            if flt == "G" and "G" not in pos:
+                continue
+            if flt == "D" and "D" not in pos:
+                continue
+            if flt == "F" and "G" in pos:
+                continue
+            filtered.append(c)
+
+        ids = [c["id"] for c in filtered]
+        total_pages = max(1, (len(ids) + TEAM_PAGE - 1) // TEAM_PAGE)
+        page = max(0, min(page, total_pages - 1))
+        page_cards = ids[page * TEAM_PAGE : (page + 1) * TEAM_PAGE]
+
+        buttons = []
+        if current:
+            buttons.append([InlineKeyboardButton("❌ Убрать", callback_data="team_clear")])
+        for cid in page_cards:
+            card = cards[cid]
+            emoji = RARITY_EMOJI.get(card.get("rarity", "common"), "")
+            text_btn = f"{card['name']} ({card.get('pos','?')}) {emoji} {int(card.get('points',0))}"
+            buttons.append([InlineKeyboardButton(text_btn, callback_data=f"team_pick_{cid}")])
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton("◀️", callback_data="team_prev"))
+        if page < total_pages - 1:
+            nav.append(InlineKeyboardButton("▶️", callback_data="team_next"))
+        nav.append(InlineKeyboardButton("↩️ Назад", callback_data="slot_back"))
+        markup = InlineKeyboardMarkup(buttons + [nav])
+        text = f"Выберите карту для слота {SLOT_LABELS.get(slot,'')}"
+        if edit and message_id:
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=text,
+                reply_markup=markup,
+            )
+        else:
+            await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=markup)
+        return
+
+    # default: show slots
+    lineup = tb.get("lineup", [None] * 6)
+    bench = tb.get("bench", [None] * 3)
+    text_lines = ["Нажми на слот и выбери карту:"]
     buttons = []
-    for cid in page_cards:
-        card = cards[cid]
-        emoji = RARITY_EMOJI.get(card.get("rarity", "common"), "")
-        mark = " ✅" if cid in selected else ""
-        text_btn = f"{mark}{card['name']} ({card.get('pos','?')}) {emoji} {int(card.get('points',0))}"
-        buttons.append([InlineKeyboardButton(text_btn, callback_data=f"team_sel_{cid}")])
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton("◀️", callback_data="team_prev"))
-    if page < total_pages - 1:
-        nav.append(InlineKeyboardButton("▶️", callback_data="team_next"))
-    nav.append(InlineKeyboardButton("Готово", callback_data="team_done"))
-    markup = InlineKeyboardMarkup(buttons + [nav])
-    text = (
-        f"Выбери до 9 карт. Сейчас выбрано: {len(selected)}\n"
-        f"Стартовых: {min(len(selected),6)}, запас: {max(0,len(selected)-6)}"
-    )
+    for slot in SLOT_ORDER:
+        list_name, idx = SLOT_MAP[slot]
+        card_id = lineup[idx] if list_name == "lineup" else bench[idx]
+        name = cards.get(card_id, {}).get("name") if card_id else "—"
+        label = f"{SLOT_LABELS[slot]}: {name}"
+        buttons.append([InlineKeyboardButton(label, callback_data=f"team_slot_{slot}")])
+
+    markup = InlineKeyboardMarkup(buttons + [[InlineKeyboardButton("✅ Готово", callback_data="team_done")]])
+    text = "\n".join(text_lines)
     if edit and message_id:
-        await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, reply_markup=markup)
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=text,
+            reply_markup=markup,
+        )
     else:
         await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=markup)
 
@@ -329,16 +422,28 @@ async def team_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     tb = context.user_data.get("team_build")
     data = query.data
+
     if data == "team_edit":
         team = db.get_team(query.from_user.id)
         if team:
+            lineup = team.get("lineup", [])
+            bench = team.get("bench", [])
+            lineup += [None] * (6 - len(lineup))
+            bench += [None] * (3 - len(bench))
             context.user_data["team_build"] = {
-                "step": "select",
+                "step": "slots",
                 "name": team.get("name", "Team"),
-                "selected": team.get("lineup", []) + team.get("bench", []),
+                "lineup": lineup,
+                "bench": bench,
                 "page": 0,
             }
-            await send_team_page(query.message.chat_id, query.from_user.id, context, edit=True, message_id=query.message.message_id)
+            await send_team_page(
+                query.message.chat_id,
+                query.from_user.id,
+                context,
+                edit=True,
+                message_id=query.message.message_id,
+            )
         return
     if data == "team_rename":
         context.user_data["team_build"] = {"step": "rename"}
@@ -354,30 +459,53 @@ async def team_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if not tb:
         return
-    if data == "team_next":
-        tb["page"] += 1
-    elif data == "team_prev":
-        tb["page"] = max(0, tb.get("page", 0) - 1)
-    elif data.startswith("team_sel_"):
-        cid = int(data.split("_")[2])
-        if cid in tb["selected"]:
-            tb["selected"].remove(cid)
-        else:
-            if len(tb["selected"]) >= 9:
-                await query.answer("Можно выбрать не более 9 карт", show_alert=True)
-                return
-            tb["selected"].append(cid)
-    elif data == "team_done":
-        lineup = tb["selected"][:6]
-        bench = tb["selected"][6:]
-        db.save_team(query.from_user.id, tb.get("name", "Team"), lineup, bench)
-        context.user_data.pop("team_build", None)
-        note = "Недостающие места будут заполнены случайными картами в бою." if len(lineup) < 6 else ""
-        await query.edit_message_text(
-            f"Команда '{tb.get('name','Team')}' сохранена. {note}"
-        )
-        return
-    await send_team_page(query.message.chat_id, query.from_user.id, context, edit=True, message_id=query.message.message_id)
+
+    if tb.get("step") == "select_card":
+        if data == "team_next":
+            tb["page"] += 1
+        elif data == "team_prev":
+            tb["page"] = max(0, tb.get("page", 0) - 1)
+        elif data == "slot_back":
+            tb["step"] = "slots"
+            tb.pop("slot", None)
+            tb["page"] = 0
+        elif data == "team_clear":
+            slot = tb.get("slot")
+            list_name, idx = SLOT_MAP.get(slot, ("lineup", 0))
+            tb[list_name][idx] = None
+            tb["step"] = "slots"
+            tb.pop("slot", None)
+            tb["page"] = 0
+        elif data.startswith("team_pick_"):
+            cid = int(data.split("_")[2])
+            slot = tb.get("slot")
+            list_name, idx = SLOT_MAP.get(slot, ("lineup", 0))
+            tb[list_name][idx] = cid
+            tb["step"] = "slots"
+            tb.pop("slot", None)
+            tb["page"] = 0
+    else:  # slot selection step
+        if data.startswith("team_slot_"):
+            tb["slot"] = data.split("_")[2]
+            tb["step"] = "select_card"
+            tb["page"] = 0
+        elif data == "team_done":
+            lineup = [c for c in tb.get("lineup", []) if c]
+            bench = [c for c in tb.get("bench", []) if c]
+            db.save_team(query.from_user.id, tb.get("name", "Team"), lineup, bench)
+            context.user_data.pop("team_build", None)
+            await query.edit_message_text(
+                f"Команда '{tb.get('name','Team')}' сохранена."
+            )
+            return
+
+    await send_team_page(
+        query.message.chat_id,
+        query.from_user.id,
+        context,
+        edit=True,
+        message_id=query.message.message_id,
+    )
 
 async def start_fight(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начать интерактивный бой против бота."""
