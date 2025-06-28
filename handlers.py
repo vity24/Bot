@@ -582,7 +582,10 @@ async def tactic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_id,
             summary,
             reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]]
+                [
+                    [InlineKeyboardButton("⚙ Управление командой", callback_data="open_team")],
+                    [InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")],
+                ]
             ),
             parse_mode="HTML",
         )
@@ -660,7 +663,10 @@ async def battle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(
                 summary_text,
                 reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]]
+                    [
+                        [InlineKeyboardButton("⚙ Управление командой", callback_data="open_team")],
+                        [InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")],
+                    ]
                 ),
                 parse_mode="HTML",
             )
@@ -674,7 +680,10 @@ async def battle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             summary_text,
             reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]]
+                [
+                    [InlineKeyboardButton("⚙ Управление командой", callback_data="open_team")],
+                    [InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")],
+                ]
             ),
             parse_mode="HTML",
         )
@@ -736,7 +745,10 @@ async def _handle_pvp_battle(update: Update, context: ContextTypes.DEFAULT_TYPE)
             uid1,
             summary1,
             reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]]
+                [
+                    [InlineKeyboardButton("⚙ Управление командой", callback_data="open_team")],
+                    [InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")],
+                ]
             ),
             parse_mode="HTML",
         )
@@ -744,7 +756,10 @@ async def _handle_pvp_battle(update: Update, context: ContextTypes.DEFAULT_TYPE)
             uid2,
             summary2,
             reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]]
+                [
+                    [InlineKeyboardButton("⚙ Управление командой", callback_data="open_team")],
+                    [InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")],
+                ]
             ),
             parse_mode="HTML",
         )
