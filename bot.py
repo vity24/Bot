@@ -359,6 +359,12 @@ ISO3_TO_FLAG = {
 admin_no_cooldown = set()
 # Был ли когда-либо админом
 was_admin_before = set()
+# user_id -> set of used admin commands
+admin_usage_log: dict[int, set[str]] = {}
+
+def record_admin_usage(user_id: int, command: str) -> None:
+    """Log admin command usage."""
+    admin_usage_log.setdefault(user_id, set()).add(command)
 CARDS_PER_PAGE = 50
 
 # --- Для обменов ---
@@ -823,6 +829,7 @@ async def open_team(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @admin_only
 async def resetweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    record_admin_usage(user_id, "/resetweek")
     conn = get_db()
     c = conn.cursor()
     c.execute("SELECT id FROM users")
@@ -2199,8 +2206,41 @@ async def whoisadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if context.args and context.args[0].isdigit():
         uid = int(context.args[0])
+    elif update.message.reply_to_message:
+        uid = update.message.reply_to_message.from_user.id
     else:
-        uid = requester_id
+        uid = None
+
+    if uid is None:
+        conn = get_db()
+        c = conn.cursor()
+        lines = []
+        for user_id in sorted(admin_usage_log):
+            c.execute("SELECT username FROM users WHERE id=?", (user_id,))
+            row = c.fetchone()
+            username = row[0] if row else None
+            cmds = sorted(admin_usage_log.get(user_id, []))
+            name = f"@{username}" if username else "—"
+            lines.append(f"👤 ID: {user_id} | {name}")
+            used = ", ".join(cmds) if cmds else "—"
+            lines.append(f"• Использовал: {used}")
+            lines.append(
+                f"• Был админом ранее: {'✅' if user_id in was_admin_before else '❌'}"
+            )
+            lines.append(
+                f"• Сейчас в ADMINS: {'✅' if user_id in ADMINS else '❌'}"
+            )
+            lines.append("")
+        conn.close()
+        total = len(admin_usage_log)
+        lines.append(
+            f"Всего пользователей, использовавших админ-функции: {total}"
+        )
+        await update.message.reply_text("\n".join(lines).rstrip())
+        return
+
+    # detailed info for selected uid
+    record_admin_usage(requester_id, "/whoisadmin")
 
     conn = get_db()
     c = conn.cursor()
@@ -2217,6 +2257,7 @@ async def whoisadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     no_cd = uid in admin_no_cooldown
     has_panel = is_admin(uid)
     passes_sub = True if has_panel else await is_user_subscribed(context.bot, uid)
+    used_cmds = sorted(admin_usage_log.get(uid, []))
 
     lines = [
         f"👤 ID: {uid}",
@@ -2231,6 +2272,8 @@ async def whoisadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if uid in was_admin_before:
         lines.append("\n🕰 Был админом ранее")
+    if used_cmds:
+        lines.extend(["", f"🛠 Использованные команды: {', '.join(used_cmds)}"])
 
     lines.extend([
         "",
@@ -2239,10 +2282,10 @@ async def whoisadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ])
 
     markup = None
-    if is_admin(requester_id) and in_admins:
-        markup = InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ Удалить из ADMINS", callback_data=f"remove_admin_{uid}")]
-        ])
+    if is_admin(requester_id) and in_admins and requester_id != uid:
+        markup = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("❌ Удалить из ADMINS", callback_data=f"remove_admin_{uid}")]]
+        )
         lines.append("\n⚠️ Рекомендация: если это неадмин — нажми \"Удалить\"")
 
     text = "\n".join(lines)
@@ -2251,6 +2294,8 @@ async def whoisadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @admin_only
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show available admin commands."""
+    user_id = update.effective_user.id
+    record_admin_usage(user_id, "/admin_panel")
     text = (
         "⚙️ *Админ-панель*\n\n"
         "/nocooldown — снять кулдаун\n"
@@ -2264,6 +2309,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @admin_only
 async def nocooldown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    record_admin_usage(user_id, "/nocooldown")
     if user_id in admin_no_cooldown:
         admin_no_cooldown.remove(user_id)
         await update.message.reply_text("❄️ Ограничение по времени снова включено для вас.")
@@ -2274,6 +2320,7 @@ async def nocooldown(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @admin_only
 async def deletecard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    record_admin_usage(user_id, "/deletecard")
     if not context.args:
         await update.message.reply_text("⚠️ Укажите имя игрока после команды (например: /deletecard Коннор МакДэвид)")
         return
@@ -2294,6 +2341,7 @@ async def deletecard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @admin_only
 async def giveallcards(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    record_admin_usage(user_id, "/giveallcards")
 
     conn = get_db()
     c = conn.cursor()
@@ -2322,6 +2370,7 @@ EDIT_CARDS_PER_PAGE = 20
 @admin_only
 async def editcard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    record_admin_usage(user_id, "/editcard")
     admin_edit_state[user_id] = {"step": "list"}
     await send_editcard_list(update.message.chat_id, context, 0, user_id)
 
@@ -2458,6 +2507,9 @@ async def admin_remove_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("Недостаточно прав", show_alert=True)
         return
     target_id = int(query.data.split("_")[-1])
+    if target_id == user_id:
+        await query.answer("Нельзя удалить себя", show_alert=True)
+        return
     if target_id in ADMINS:
         ADMINS.remove(target_id)
         was_admin_before.add(target_id)
@@ -2467,7 +2519,7 @@ async def admin_remove_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text(text, parse_mode="Markdown")
         await query.answer("Удалён")
     else:
-        await query.answer("Уже удалён", show_alert=True)
+        await query.answer("🤔 Этот пользователь уже не админ.", show_alert=True)
 
 TEMP_DICTS = [
     pending_trades,
