@@ -5,7 +5,7 @@ import re
 import time
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
-from battle import BattleSession, BattleController
+from battle import BattleSession, BattleController, POSITION_EMOJI
 import db_pg as db
 from helpers.leveling import level_from_xp, xp_to_next, calc_battle_xp
 from helpers.commentary import format_period_summary, format_final_summary
@@ -164,6 +164,15 @@ RARITY_EMOJI = {
     "common": "🟢",
 }
 
+# russian rarity names without emoji
+RARITY_RU_SHORT = {
+    "legendary": "Легендарная",
+    "mythic": "Мифическая",
+    "epic": "Эпическая",
+    "rare": "Редкая",
+    "common": "Обычная",
+}
+
 TEAM_PAGE = 10
 
 
@@ -182,19 +191,45 @@ async def show_my_team(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not team:
         await update.message.reply_text("Команда не создана. Используй /team")
         return
-    lineup_names = [get_card_name(cid) for cid in team.get("lineup", [])]
-    bench_names = [get_card_name(cid) for cid in team.get("bench", [])]
-    text = (
-        f"{team['name']}\n"
-        f"🏒 {', '.join(lineup_names) if lineup_names else '—'}\n"
-        f"🪑 {', '.join(bench_names) if bench_names else '—'}"
-    )
+    cards = {c["id"]: c for c in await get_user_cards(user_id)}
+    lineup = [cards[cid] for cid in team.get("lineup", []) if cid in cards]
+    bench = [cards[cid] for cid in team.get("bench", []) if cid in cards]
+
+    avg_points = round(sum(c.get("points", 0) for c in lineup) / len(lineup)) if lineup else 0
+
+    lines = [f"<b>{team['name']}</b> 🏒 (средние очки: {avg_points})", "👥 Основной состав:"]
+    if lineup:
+        for card in lineup:
+            pos = card.get("pos", "")
+            pos_icon = POSITION_EMOJI.get(pos, "")
+            rarity = card.get("rarity", "common")
+            rarity_emoji = RARITY_EMOJI.get(rarity, "")
+            rarity_ru = RARITY_RU_SHORT.get(rarity, rarity)
+            points = int(card.get("points", 0))
+            lines.append(f"{pos_icon} <b>{card['name']}</b> — Очки: {points}, {rarity_emoji} {rarity_ru}, {pos}")
+    else:
+        lines.append("—")
+
+    lines.append("🪑 Запас:")
+    if bench:
+        for card in bench:
+            pos = card.get("pos", "")
+            pos_icon = POSITION_EMOJI.get(pos, "")
+            rarity = card.get("rarity", "common")
+            rarity_emoji = RARITY_EMOJI.get(rarity, "")
+            rarity_ru = RARITY_RU_SHORT.get(rarity, rarity)
+            points = int(card.get("points", 0))
+            lines.append(f"{pos_icon} <b>{card['name']}</b> — Очки: {points}, {rarity_emoji} {rarity_ru}, {pos}")
+    else:
+        lines.append("—")
+
+    text = "\n".join(lines)
     buttons = [
         InlineKeyboardButton("✏️ Изменить", callback_data="team_edit"),
         InlineKeyboardButton("📝 Переименовать", callback_data="team_rename"),
     ]
     markup = InlineKeyboardMarkup([buttons])
-    await update.message.reply_text(text, reply_markup=markup)
+    await update.message.reply_text(text, reply_markup=markup, parse_mode="HTML")
 
 
 async def create_team(update: Update, context: ContextTypes.DEFAULT_TYPE):
