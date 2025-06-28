@@ -533,6 +533,10 @@ async def team_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def start_fight(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начать интерактивный бой против бота."""
+    from helpers.admin_utils import banned_users
+    if update.effective_user.id in banned_users:
+        await update.message.reply_text("🚫 Вы заблокированы в боте.")
+        return
     context.user_data["fight_mode"] = "pve"
     user_id = update.effective_user.id
     team_data = db.get_team(user_id)
@@ -554,6 +558,10 @@ async def start_fight(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def start_duel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Join PvP queue without tactic selection."""
+    from helpers.admin_utils import banned_users
+    if update.effective_user.id in banned_users:
+        await update.message.reply_text("🚫 Вы заблокированы в боте.")
+        return
     context.user_data["fight_mode"] = "pvp"
     user = update.effective_user
     user_id = user.id
