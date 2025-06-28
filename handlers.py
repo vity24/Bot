@@ -173,6 +173,15 @@ RARITY_RU_SHORT = {
     "common": "Обычная",
 }
 
+# order for sorting cards by rarity
+RARITY_ORDER = {
+    "legendary": 0,
+    "mythic": 1,
+    "epic": 2,
+    "rare": 3,
+    "common": 4,
+}
+
 TEAM_PAGE = 10
 
 # order and labels for team slots
@@ -360,6 +369,13 @@ async def send_team_page(chat_id, user_id, context, edit=False, message_id=None)
                 continue
             filtered.append(c)
 
+        filtered.sort(
+            key=lambda c: (
+                RARITY_ORDER.get(c.get("rarity", "common"), 99),
+                c.get("name", ""),
+            )
+        )
+
         ids = [c["id"] for c in filtered]
         total_pages = max(1, (len(ids) + TEAM_PAGE - 1) // TEAM_PAGE)
         page = max(0, min(page, total_pages - 1))
@@ -378,7 +394,7 @@ async def send_team_page(chat_id, user_id, context, edit=False, message_id=None)
             nav.append(InlineKeyboardButton("◀️", callback_data="team_prev"))
         if page < total_pages - 1:
             nav.append(InlineKeyboardButton("▶️", callback_data="team_next"))
-        nav.append(InlineKeyboardButton("↩️ Назад", callback_data="slot_back"))
+        nav.append(InlineKeyboardButton("↩️ Назад", callback_data="team_back"))
         markup = InlineKeyboardMarkup(buttons + [nav])
         text = f"Выберите карту для слота {SLOT_LABELS.get(slot,'')}"
         if edit and message_id:
@@ -404,7 +420,11 @@ async def send_team_page(chat_id, user_id, context, edit=False, message_id=None)
         label = f"{SLOT_LABELS[slot]}: {name}"
         buttons.append([InlineKeyboardButton(label, callback_data=f"team_slot_{slot}")])
 
-    markup = InlineKeyboardMarkup(buttons + [[InlineKeyboardButton("✅ Готово", callback_data="team_done")]])
+    controls = [
+        [InlineKeyboardButton("♻️ Сбросить", callback_data="team_reset")],
+        [InlineKeyboardButton("✅ Готово", callback_data="team_done")],
+    ]
+    markup = InlineKeyboardMarkup(buttons + controls)
     text = "\n".join(text_lines)
     if edit and message_id:
         await context.bot.edit_message_text(
@@ -465,7 +485,7 @@ async def team_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             tb["page"] += 1
         elif data == "team_prev":
             tb["page"] = max(0, tb.get("page", 0) - 1)
-        elif data == "slot_back":
+        elif data == "team_back":
             tb["step"] = "slots"
             tb.pop("slot", None)
             tb["page"] = 0
@@ -488,6 +508,10 @@ async def team_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data.startswith("team_slot_"):
             tb["slot"] = data.split("_")[2]
             tb["step"] = "select_card"
+            tb["page"] = 0
+        elif data == "team_reset":
+            tb["lineup"] = [None] * 6
+            tb["bench"] = [None] * 3
             tb["page"] = 0
         elif data == "team_done":
             lineup = [c for c in tb.get("lineup", []) if c]
