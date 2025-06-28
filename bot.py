@@ -2750,8 +2750,13 @@ def main():
     application.job_queue.run_repeating(cleanup_expired, interval=3600)
 
     # track user activity
-    application.add_handler(MessageHandler(filters.ALL, track_user_activity), group=0)
-    application.add_handler(CallbackQueryHandler(track_user_activity, pattern=".*"), group=0)
+    application.add_handler(
+        MessageHandler(filters.ALL, track_user_activity, block=False), group=0
+    )
+    application.add_handler(
+        CallbackQueryHandler(track_user_activity, pattern=".*", block=False),
+        group=0,
+    )
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("menu", menu))
