@@ -142,7 +142,7 @@ def _get_user_cards_sync(user_id):
 async def get_user_cards(user_id):
     return await asyncio.to_thread(_get_user_cards_sync, user_id)
 
-LOG_LINES_PER_PAGE = 15
+LOG_LINES_PER_PAGE = 20
 # TTL for entries in PVP queue, seconds
 PVP_TTL = 600
 PVP_QUEUE = OrderedDict()
@@ -473,13 +473,14 @@ async def _build_team(user_id, ids=None):
         })
     return team
 
-async def _run_battle(user_id, opponent_name, team1, team2, tactic1, tactic2, name1="Team1", name2="Team2"):
-    """Run a full battle automatically using ``BattleController``."""
-    session = BattleSession(team1, team2, tactic1=tactic1, tactic2=tactic2, name1=name1, name2=name2)
-    controller = BattleController(session)
-    result = await asyncio.to_thread(controller.auto_play)
-    db.save_battle_result(user_id, opponent_name, result)
-    return result, session
+# Deprecated helper that produced verbose logs in earlier versions
+# async def _run_battle(user_id, opponent_name, team1, team2, tactic1, tactic2, name1="Team1", name2="Team2"):
+#     """Run a full battle automatically using ``BattleController``."""
+#     session = BattleSession(team1, team2, tactic1=tactic1, tactic2=tactic2, name1=name1, name2=name2)
+#     controller = BattleController(session)
+#     result = await asyncio.to_thread(controller.auto_play)
+#     db.save_battle_result(user_id, opponent_name, result)
+#     return result, session
 
 
 async def _start_pvp_duel(uid1: int, uid2: int, team1, team2, name1: str, name2: str, context: ContextTypes.DEFAULT_TYPE):
@@ -627,7 +628,10 @@ async def tactic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         team1 = team
         team2 = await _build_team(0)
         tactic2 = random.choice(list(TACTICS.values()))
-        result, session = await _run_battle(user_id, "Bot", team1, team2, tactic, tactic2, team_name, "Bot")
+        session = BattleSession(team1, team2, tactic1=tactic, tactic2=tactic2, name1=team_name, name2="Bot")
+        controller = BattleController(session)
+        result = await asyncio.to_thread(controller.auto_play)
+        db.save_battle_result(user_id, "Bot", result)
         xp_gain, lvl, leveled = await apply_xp(user_id, result, True, context)
         summary = format_final_summary(session, result, xp_gain, lvl, leveled)
         await context.bot.send_message(user_id, summary, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]]))
