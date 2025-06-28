@@ -123,10 +123,24 @@ def format_final_summary(session: BattleSession, result: dict, xp_gain: int, lev
     goals_by_player = defaultdict(int)
     for g in session.goals:
         goals_by_player[g["player"]] += 1
+
+    players = {p["name"]: p for p in session.team1 + session.team2}
+    saves_by_player = defaultdict(int)
+    for e in session.events:
+        if (
+            e.get("type") == "save"
+            and players.get(e.get("player"), {}).get("pos") == "G"
+        ):
+            saves_by_player[e["player"]] += 1
+
     if mvp:
-        goals = goals_by_player.get(mvp, 0)
-        goal_word = "гол" if goals == 1 else "гола"
-        parts.append(f"🎯 Звезда матча: <b>{mvp}</b> — {goals} {goal_word}")
+        if players.get(mvp, {}).get("pos") == "G":
+            saves = saves_by_player.get(mvp, 0)
+            parts.append(f"🎯 Звезда матча: <b>{mvp}</b> — {saves} сейвов")
+        else:
+            goals = goals_by_player.get(mvp, 0)
+            goal_word = "гол" if goals == 1 else "гола"
+            parts.append(f"🎯 Звезда матча: <b>{mvp}</b> — {goals} {goal_word}")
 
 
     # XP reward is sent separately, so do not include it in the summary
