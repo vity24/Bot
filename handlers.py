@@ -601,7 +601,14 @@ async def tactic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.save_battle_result(user_id, "Bot", result)
         xp_gain, lvl, leveled = await apply_xp(user_id, result, True, context)
         summary = format_final_summary(session, result, xp_gain, lvl, leveled)
-        await context.bot.send_message(user_id, summary, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]]))
+        await context.bot.send_message(
+            user_id,
+            summary,
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]]
+            ),
+            parse_mode="HTML",
+        )
 
 
 async def battle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -675,7 +682,10 @@ async def battle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             summary_text = format_final_summary(controller.session, result, xp_gain, lvl, up)
             await query.edit_message_text(
                 summary_text,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]])
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]]
+                ),
+                parse_mode="HTML",
             )
             state.clear()
     elif phase == "ot":
@@ -686,7 +696,10 @@ async def battle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         summary_text = format_final_summary(controller.session, result, xp_gain, lvl, up)
         await query.edit_message_text(
             summary_text,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]])
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]]
+            ),
+            parse_mode="HTML",
         )
         state.clear()
 
@@ -742,8 +755,22 @@ async def _handle_pvp_battle(update: Update, context: ContextTypes.DEFAULT_TYPE)
         xp2, lvl2, up2 = await apply_xp(uid2, opp_result, False, context)
         summary1 = format_final_summary(controller.session, result, xp1, lvl1, up1)
         summary2 = format_final_summary(controller.session, opp_result, xp2, lvl2, up2)
-        await context.bot.send_message(uid1, summary1, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]]))
-        await context.bot.send_message(uid2, summary2, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]]))
+        await context.bot.send_message(
+            uid1,
+            summary1,
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]]
+            ),
+            parse_mode="HTML",
+        )
+        await context.bot.send_message(
+            uid2,
+            summary2,
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]]
+            ),
+            parse_mode="HTML",
+        )
         DUEL_USERS.pop(uid1, None)
         DUEL_USERS.pop(uid2, None)
         ACTIVE_DUELS.pop(duel_key, None)
