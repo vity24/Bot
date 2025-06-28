@@ -76,6 +76,7 @@ def generate_premium_log(session: BattleSession, result: dict, xp_gain: int = 85
         goals = sum(1 for g in session.goals if g["player"] == mvp)
         goal_word = "гол" if goals == 1 else "гола"
         lines.append(f"🎯 Звезда матча: <b>{mvp}</b> — {goals} {goal_word}")
-    lines.append(f"🎖 +{xp_gain} XP, рейтинг +{rating_delta}")
+
+    # XP and rating changes are delivered separately
 
     return "\n".join(lines)
