@@ -380,10 +380,12 @@ class BattleSession:
             "str_gap": self.str_gap,
         }
 
-    def simulate(self) -> Dict:
-        """Run a full match using :class:`BattleController`."""
-        controller = BattleController(self)
-        return controller.auto_play()
+
+    # Deprecated old simulation helper that returned verbose logs
+    # def simulate(self) -> Dict:
+    #     """Run a full match using :class:`BattleController`."""
+    #     controller = BattleController(self)
+    #     return controller.auto_play()
 
 
 class BattleController:
