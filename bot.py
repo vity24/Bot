@@ -2204,12 +2204,27 @@ async def whoisadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает информацию о пользователе и права администратора."""
     requester_id = update.effective_user.id
 
-    if context.args and context.args[0].isdigit():
-        uid = int(context.args[0])
+    uid = None
+    if context.args:
+        arg = context.args[0]
+        if arg.isdigit():
+            uid = int(arg)
+        else:
+            username = arg.lstrip("@")
+            conn = get_db()
+            c = conn.cursor()
+            c.execute(
+                "SELECT id FROM users WHERE lower(username)=lower(?)", (username,)
+            )
+            row = c.fetchone()
+            conn.close()
+            if row:
+                uid = row[0]
+            else:
+                await update.message.reply_text("Пользователь не найден.")
+                return
     elif update.message.reply_to_message:
         uid = update.message.reply_to_message.from_user.id
-    else:
-        uid = None
 
     if uid is None:
         conn = get_db()
@@ -2302,7 +2317,8 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/editcard — редактировать карточки\n"
         "/giveallcards — выдать все недостающие\n"
         "/resetweek — обнулить недельный прирост\n"
-        "/deletecard <имя> — удалить карту по имени"
+        "/deletecard <имя> — удалить карту по имени\n"
+        "/whoisadmin <ID|@user> — информация об админах"
     )
     await update.message.reply_text(text, parse_mode="Markdown")
 
