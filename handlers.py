@@ -206,7 +206,9 @@ async def show_my_team(update: Update, context: ContextTypes.DEFAULT_TYPE):
             rarity_emoji = RARITY_EMOJI.get(rarity, "")
             rarity_ru = RARITY_RU_SHORT.get(rarity, rarity)
             points = int(card.get("points", 0))
-            lines.append(f"{pos_icon} <b>{card['name']}</b> — Очки: {points}, {rarity_emoji} {rarity_ru}, {pos}")
+            lines.append(f"{pos_icon} <b>{card['name']}</b>")
+            lines.append(f"Очки: {points}, {rarity_emoji} {rarity_ru}, {pos}")
+            lines.append("")
     else:
         lines.append("—")
 
@@ -219,7 +221,9 @@ async def show_my_team(update: Update, context: ContextTypes.DEFAULT_TYPE):
             rarity_emoji = RARITY_EMOJI.get(rarity, "")
             rarity_ru = RARITY_RU_SHORT.get(rarity, rarity)
             points = int(card.get("points", 0))
-            lines.append(f"{pos_icon} <b>{card['name']}</b> — Очки: {points}, {rarity_emoji} {rarity_ru}, {pos}")
+            lines.append(f"{pos_icon} <b>{card['name']}</b>")
+            lines.append(f"Очки: {points}, {rarity_emoji} {rarity_ru}, {pos}")
+            lines.append("")
     else:
         lines.append("—")
 
