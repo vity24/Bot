@@ -602,7 +602,6 @@ async def tactic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         xp_gain, lvl, leveled = await apply_xp(user_id, result, True, context)
         summary = format_final_summary(session, result, xp_gain, lvl, leveled)
         await context.bot.send_message(user_id, summary, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]]))
-        await _start_log_view(update.effective_user.id, result, session, context, xp_gain)
 
 
 async def battle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -678,7 +677,6 @@ async def battle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 summary_text,
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]])
             )
-            await _start_log_view(query.from_user.id, result, controller.session, context, xp_gain)
             state.clear()
     elif phase == "ot":
         tactic = "aggressive" if data == "battle_ot_attack" else "defensive"
@@ -690,7 +688,6 @@ async def battle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             summary_text,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]])
         )
-        await _start_log_view(query.from_user.id, result, controller.session, context, xp_gain)
         state.clear()
 
 
@@ -747,8 +744,6 @@ async def _handle_pvp_battle(update: Update, context: ContextTypes.DEFAULT_TYPE)
         summary2 = format_final_summary(controller.session, opp_result, xp2, lvl2, up2)
         await context.bot.send_message(uid1, summary1, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]]))
         await context.bot.send_message(uid2, summary2, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]]))
-        await _start_log_view(uid1, result, controller.session, context, xp1)
-        await _start_log_view(uid2, result, controller.session, context, xp2)
         DUEL_USERS.pop(uid1, None)
         DUEL_USERS.pop(uid2, None)
         ACTIVE_DUELS.pop(duel_key, None)

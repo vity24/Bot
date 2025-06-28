@@ -1,4 +1,5 @@
 import random
+from collections import defaultdict
 from typing import List
 from battle import BattleSession
 
@@ -53,50 +54,61 @@ def _random_goalie(session: BattleSession) -> tuple[str, str]:
 
 
 def format_period_summary(session: BattleSession) -> str:
+    """Return a short recap of the just finished period."""
     period = session.current_period
     if period < 1 or period > 3:
         return ""
+
     title = f"🏁 {PERIOD_TITLES[period-1]} период завершён!"
-    score_line = f"📊 На табло: {session.name1} {session.score['team1']} — {session.score['team2']} {session.name2}"
+    score_line = (
+        f"📊 На табло: {session.name1} {session.score['team1']} — {session.score['team2']} {session.name2}"
+    )
 
-    events: List[str] = []
-    for _ in range(random.randint(3, 5)):
-        pool = random.choice([GOAL_CLIPS, SAVE_CLIPS, MISS_CLIPS, MEME_CLIPS])
-        template = random.choice(pool)
-        if "{player}" in template:
-            name, team = _random_player(session)
-            events.append(template.format(player=name, team=team))
-        elif "{goalie}" in template:
-            name, team = _random_goalie(session)
-            events.append(template.format(goalie=name, team=team))
-        else:
-            events.append(template.format(team=session.name1))
-    event_text = "\n".join(events)
+    period_events = [e for e in session.events if e.get("period") == period]
+    goal_lines: List[str] = []
+    other_lines: List[str] = []
+    for ev in period_events:
+        player = ev.get("player", "")
+        team = ev.get("team", "")
+        if ev.get("type") == "goal":
+            goal_lines.append(f"🥅 <b>{player}</b> ({team}) забивает!")
+        elif ev.get("type") == "save":
+            other_lines.append(f"🛡 {player} ({team}) спасает бросок")
+        elif ev.get("type") == "penalty":
+            other_lines.append(f"🚔 {player} ({team}) удалён")
+        elif ev.get("type") == "injury":
+            other_lines.append(f"💢 {player} ({team}) травмирован")
+        elif ev.get("type") == "fight":
+            other_lines.append(f"🥊 {player} ({team}) начинает драку")
+        elif ev.get("type") == "block":
+            other_lines.append(f"🚫 {player} ({team}) блокирует бросок")
+        elif ev.get("type") == "post":
+            other_lines.append(f"🔔 {player} ({team}) попадает в штангу")
+        elif ev.get("type") == "miss":
+            other_lines.append(f"❌ {player} ({team}) мимо ворот")
 
-    face1 = random.randint(5, 15)
-    face2 = random.randint(5, 15)
-    xg1 = round(random.uniform(0.5, 2.5), 2)
-    xg2 = round(random.uniform(0.5, 2.5), 2)
-    stat_line = random.choice([
-        f"📈 Вбрасывания: {session.name1} {face1} — {face2} {session.name2}",
-        f"XG за период: {session.name1} {xg1} — {session.name2} {xg2}",
-    ])
+    random.shuffle(other_lines)
+    lines = goal_lines + other_lines
+    if len(lines) < 5:
+        while len(lines) < 5:
+            template = random.choice(FAN_CLIPS + MEME_CLIPS)
+            if "{player}" in template:
+                name, tm = _random_player(session)
+                lines.append(template.format(player=name, team=tm))
+            else:
+                lines.append(template.format(team=session.name1))
+    lines = lines[:8]
 
-    fan_or_expert_template = random.choice(FAN_CLIPS + EXPERT_CLIPS)
-    if "{player}" in fan_or_expert_template:
-        name, team = _random_player(session)
-        fan_or_expert = fan_or_expert_template.format(player=name, team=team, team1=session.name1, team2=session.name2)
-    else:
-        fan_or_expert = fan_or_expert_template.format(team=session.name1, team1=session.name1, team2=session.name2)
+    closing = (
+        "⏱ Второй период начинается — скорректируй тактику, тренер!"
+        if period == 1
+        else "⏱ Финальный период впереди — настрой свою команду!"
+        if period == 2
+        else ""
+    )
 
-    if period == 1:
-        closing = "⏱ Второй период начинается — скорректируй тактику, тренер!"
-    elif period == 2:
-        closing = "⏱ Финальный период впереди — настрой свою команду!"
-    else:
-        closing = ""
-
-    return f"{title}\n{score_line}\n\n{event_text}\n{stat_line}\n\n{fan_or_expert}\n\n{closing}"
+    event_text = "\n".join(lines)
+    return f"{title}\n{score_line}\n\n{event_text}\n\n{closing}"
 
 
 def format_final_summary(session: BattleSession, result: dict, xp_gain: int, level: int, leveled_up: bool = False) -> str:
@@ -108,14 +120,22 @@ def format_final_summary(session: BattleSession, result: dict, xp_gain: int, lev
     parts: List[str] = [header]
 
     mvp = result.get("mvp")
+    goals_by_player = defaultdict(int)
+    for g in session.goals:
+        goals_by_player[g["player"]] += 1
     if mvp:
-        goals = sum(1 for g in session.goals if g["player"] == mvp)
+        goals = goals_by_player.get(mvp, 0)
         goal_word = "гол" if goals == 1 else "гола"
         parts.append(f"🎯 Звезда матча: <b>{mvp}</b> — {goals} {goal_word}")
 
-    if leveled_up:
-        parts.append(f"🎖 +{xp_gain} XP, рейтинг +1")
-    else:
-        parts.append(f"🎖 +{xp_gain} XP, рейтинг +1")
+    reason = "за отличную игру!"
+    if result.get("winner") in ("team1", "team2"):
+        top_goals = goals_by_player.get(mvp, 0)
+        if mvp and top_goals >= 2:
+            reason = f"за дубль {mvp} и уверенную победу!"
+        else:
+            reason = "за уверенную победу!"
+    parts.append(f"💎 +{xp_gain} XP {reason}")
+    parts.append("🎖 Рейтинг +1")
 
     return "\n".join(parts)
