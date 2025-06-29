@@ -1767,12 +1767,18 @@ async def send_collection_page(
     )
 
     if edit_message and message_id:
-        await context.bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text=text,
-            reply_markup=markup,
-        )
+        try:
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=text,
+                reply_markup=markup,
+            )
+        except BadRequest as e:
+            if "Message is not modified" in str(e):
+                pass
+            else:
+                await context.bot.send_message(chat_id, text, reply_markup=markup)
     else:
         await context.bot.send_message(chat_id, text, reply_markup=markup)
 
