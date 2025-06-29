@@ -2822,6 +2822,7 @@ def main():
     application.add_handler(CommandHandler("duel_list", handlers.duel_list))
     application.add_handler(CommandHandler("history", handlers.show_battle_history))
     application.add_handler(CallbackQueryHandler(handlers.tactic_callback, pattern="^tactic_"))
+    application.add_handler(CallbackQueryHandler(handlers.battle_callback, pattern="^dir_"))
     application.add_handler(CallbackQueryHandler(handlers.battle_callback, pattern="^battle_"))
     application.add_handler(CallbackQueryHandler(handlers.duel_callback, pattern="^(challenge_\\d+|duel_cancel)$"))
 
