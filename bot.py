@@ -51,12 +51,7 @@ from collections import Counter
 from functools import wraps
 import handlers
 import db_pg as db
-from cache import (
-    load_card_cache,
-    get_card_from_cache,
-    refresh_card_cache,
-    invalidate_score_cache_for_card,
-)
+from cards import get_card
 from helpers.leveling import xp_to_next
 from helpers import shorten_number, format_ranking_row, format_my_rank
 from helpers.styles import get_player_style
@@ -302,6 +297,20 @@ RANK_TTL = 600  # seconds
 SCORE_TTL = 600  # seconds
 TOP_TTL = 600  # seconds
 
+def invalidate_score_cache_for_card(card_id: int) -> None:
+    """Reset cached scores and ranks for users owning the given card."""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT DISTINCT user_id FROM inventory WHERE card_id=?", (card_id,))
+    user_ids = [row[0] for row in c.fetchall()]
+    conn.close()
+
+    for uid in user_ids:
+        SCORE_CACHE.pop(uid, None)
+        RANK_CACHE.pop(uid, None)
+    # reset top cache so high scores recompute
+    globals()['TOP_CACHE'] = ([], 0)
+
 POS_RU = {
     "C": "Центр",
     "LW": "Левый нап.",
@@ -391,7 +400,6 @@ def setup_db():
     # ... остальной код создания таблиц ...
     conn.commit()
     conn.close()
-    load_card_cache(force=True)
 
 def wrap_line(text, length=35):
     words = text.split()
@@ -452,7 +460,7 @@ def _get_user_cards_sync(user_id):
     card_counts = Counter(rows)
     cards = []
     for card_id, count in card_counts.items():
-        card = get_card_from_cache(card_id)
+        card = get_card(card_id)
         if card:
             s = f"{card['name']} ({RARITY_RU.get(card['rarity'], card['rarity'])})"
             if count > 1:
@@ -582,7 +590,7 @@ def _calculate_user_score_sync(user_id):
     counts = Counter(card_ids)
     total_score = 0
     for card_id, count in counts.items():
-        card = get_card_from_cache(card_id)
+        card = get_card(card_id)
         if not card:
             continue
         pos = card["pos"]
@@ -957,7 +965,7 @@ async def show_trade_cards(context, user_id, prompt):
         return
     buttons = []
     for card_id, count in cards:
-        card = get_card_from_cache(card_id)
+        card = get_card(card_id)
         if not card:
             continue  # если карты нет в базе — не выводим
         name = card["name"]
@@ -1358,7 +1366,7 @@ async def finalize_multi_trade(context, acceptor_id, initiator_id, offer1, offer
     pending_trades.pop(acceptor_id, None)
 
 def get_card_name_rarity(card_id):
-    card = get_card_from_cache(card_id)
+    card = get_card(card_id)
     if card:
         return card["name"], card["rarity"]
     return "?", "common"
@@ -1406,7 +1414,7 @@ def get_full_cards_for_user(user_id):
     cards = []
     total_count = 0
     for cid, cnt in count_dict.items():
-        card = get_card_from_cache(cid)
+        card = get_card(cid)
         if not card:
             continue
         card_copy = card.copy()
@@ -1496,7 +1504,7 @@ def get_user_club_cards(user_id, club_key):
     count_dict = Counter(ids)
     cards = []
     for cid, cnt in count_dict.items():
-        card = get_card_from_cache(cid)
+        card = get_card(cid)
         if not card:
             continue
         card_copy = card.copy()
@@ -1512,7 +1520,7 @@ def get_team_cards(user_id):
     ids = team.get("lineup", []) + team.get("bench", [])
     cards = []
     for cid in ids:
-        card = get_card_from_cache(cid)
+        card = get_card(cid)
         if card:
             cpy = card.copy()
             cpy["count"] = 1
@@ -1550,7 +1558,7 @@ def build_filtered_cards(user_id, *, rarity=None, club=None, new_only=False, dup
         rows = [r for r in rows if r[3] > 1]
     cards = []
     for cid, name, rar, cnt in rows:
-        card = get_card_from_cache(cid)
+        card = get_card(cid)
         if not card:
             continue
         cpy = card.copy()
@@ -2324,7 +2332,6 @@ async def deletecard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         c.execute('DELETE FROM cards WHERE id = ?', (row[0],))
         conn.commit()
         await update.message.reply_text(f"Карточка игрока '{name}' удалена.")
-        refresh_card_cache(row[0])
     conn.close()
 
 @admin_only
@@ -2424,7 +2431,7 @@ async def editcard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("Назад", callback_data="admineditpage_0")]
         ])
         # Получим имя карточки
-        card = get_card_from_cache(card_id)
+        card = get_card(card_id)
         name = card["name"] if card else "карточка"
         text = f"Выбрана: <b>{name}</b>\nЧто редактировать?"
         await query.edit_message_text(text, reply_markup=markup, parse_mode='HTML')
@@ -2451,7 +2458,7 @@ async def editcard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "admineditname":
         admin_edit_state[user_id]["step"] = "edit_name"
         card_id = admin_edit_state[user_id].get("card_id")
-        card = get_card_from_cache(card_id)
+        card = get_card(card_id)
         name = card["name"] if card else "игрока"
         await query.edit_message_text(f"✍️ Введи новое имя для {name}:")
         await query.answer()
@@ -2472,7 +2479,6 @@ async def editcard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.commit()
         name = row[0] if row else "карточка"
         conn.close()
-        refresh_card_cache(card_id)
         invalidate_score_cache_for_card(card_id)
         await query.edit_message_text(f"✅ Редкость карточки <b>{name}</b> обновлена на: {RARITY_RU[rarity]}", parse_mode='HTML')
         admin_edit_state.pop(user_id, None)
@@ -2495,14 +2501,12 @@ async def admin_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         conn.commit()
         name = row[0] if row else "карточка"
         conn.close()
-        refresh_card_cache(card_id)
         invalidate_score_cache_for_card(card_id)
         await update.message.reply_text(f"✅ Поле <b>stats</b> карточки <b>{name}</b> обновлено на: <code>{new_stats}</code>", parse_mode='HTML')
     elif state.get("step") == "edit_name":
         card_id = state.get("card_id")
         new_name = update.message.text.strip()
         db.update_player_name(card_id, new_name)
-        refresh_card_cache(card_id)
         await update.message.reply_text(f"✅ Игрок теперь известен как {new_name}!")
     admin_edit_state.pop(user_id, None)
 
