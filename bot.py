@@ -53,7 +53,6 @@ import handlers
 import db_pg as db
 from helpers.leveling import xp_to_next
 from helpers import shorten_number, format_ranking_row, format_my_rank
-from helpers.normalize_stats import normalize_stats_input
 from helpers.styles import get_player_style
 from helpers.permissions import ADMINS, is_admin, admin_only
 from helpers.admin_utils import (
@@ -290,21 +289,78 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # --- Кэш для карточек ---
-from cache import (
-    CARD_CACHE,
-    CARD_FIELDS,
-    load_card_cache,
-    get_card_from_cache,
-    refresh_card_cache,
-    invalidate_score_cache_for_card,
-)
-
+CARD_FIELDS = [
+    "id", "name", "img", "pos", "country", "born", "height",
+    "weight", "rarity", "stats", "team_en", "team_ru"
+]
+CARD_CACHE = {}
 RANK_CACHE: dict[int, tuple[int, int, float]] = {}
 SCORE_CACHE: dict[int, tuple[float, float]] = {}
 TOP_CACHE: tuple[list[tuple[int, str | None, float, int]], float] = ([], 0)
 RANK_TTL = 600  # seconds
 SCORE_TTL = 600  # seconds
 TOP_TTL = 600  # seconds
+
+def load_card_cache(force=False):
+    """Загружаем все карточки в память для сокращения обращений к БД."""
+    global CARD_CACHE
+    if CARD_CACHE and not force:
+        return
+    conn = get_db()
+    c = conn.cursor()
+    c.execute(
+        "SELECT id, name, img, pos, country, born, height, weight, rarity, stats, team_en, team_ru FROM cards"
+    )
+    rows = c.fetchall()
+    conn.close()
+    CARD_CACHE = {
+        row[0]: dict(zip(CARD_FIELDS, row))
+        for row in rows
+    }
+
+def get_card_from_cache(card_id):
+    """Возвращает информацию о карте из кэша, при необходимости подгружает её."""
+    if card_id not in CARD_CACHE:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute(
+            "SELECT id, name, img, pos, country, born, height, weight, rarity, stats, team_en, team_ru FROM cards WHERE id=?",
+            (card_id,),
+        )
+        row = c.fetchone()
+        conn.close()
+        if row:
+            CARD_CACHE[card_id] = dict(zip(CARD_FIELDS, row))
+        else:
+            return None
+    return CARD_CACHE.get(card_id)
+
+def refresh_card_cache(card_id):
+    """Обновляем кэш для конкретной карты или очищаем её."""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute(
+        "SELECT id, name, img, pos, country, born, height, weight, rarity, stats, team_en, team_ru FROM cards WHERE id=?",
+        (card_id,),
+    )
+    row = c.fetchone()
+    conn.close()
+    if row:
+        CARD_CACHE[card_id] = dict(zip(CARD_FIELDS, row))
+    else:
+        CARD_CACHE.pop(card_id, None)
+
+def invalidate_score_cache_for_card(card_id: int) -> None:
+    """Reset cached scores and ranks for users owning the given card."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT DISTINCT user_id FROM inventory WHERE card_id=?", (card_id,))
+    user_ids = [row[0] for row in cur.fetchall()]
+    conn.close()
+    for uid in user_ids:
+        SCORE_CACHE.pop(uid, None)
+        RANK_CACHE.pop(uid, None)
+    globals()['TOP_CACHE'] = ([], 0)
 
 POS_RU = {
     "C": "Центр",
@@ -507,14 +563,11 @@ def parse_points(stats, pos):
         win = 0
         gaa = 3.0
         m_win = re.search(r'Поб\s+(\d+)', stats or "")
-        m_gaa = re.search(r'КН\s*([\d.,]+)', stats or "")
+        m_gaa = re.search(r'КН\s*([\d.]+)', stats or "")
         if m_win:
             win = int(m_win.group(1))
         if m_gaa:
-            try:
-                gaa = float(m_gaa.group(1).replace(",", "."))
-            except ValueError:
-                gaa = 3.0
+            gaa = float(m_gaa.group(1))
         return win * 2 + (30 - gaa * 10)
     else:
         m = re.search(r'Очки\s+(\d+)', stats or "")
@@ -532,23 +585,6 @@ def extract_goalie_stats(stats: str | None) -> tuple[str, str]:
     m_kn = re.search(r"КН\s*([\d.,]+)", stats or "")
     kn = m_kn.group(1) if m_kn else "0"
     return wins, kn
-
-def update_card_points(card_id: int) -> None:
-    """Recalculate and store points value for a card."""
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT pos, stats FROM cards WHERE id=?", (card_id,))
-    row = cur.fetchone()
-    if not row:
-        conn.close()
-        return
-    pos, stats = row
-    points = parse_points(stats, pos)
-    cur.execute("UPDATE cards SET points=? WHERE id=?", (points, card_id))
-    conn.commit()
-    conn.close()
-    refresh_card_cache(card_id)
-    invalidate_score_cache_for_card(card_id)
 
 def format_card_caption(
     card: dict,
@@ -1736,18 +1772,12 @@ async def send_collection_page(
     )
 
     if edit_message and message_id:
-        try:
-            await context.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=message_id,
-                text=text,
-                reply_markup=markup,
-            )
-        except BadRequest as e:
-            if "Message is not modified" in str(e):
-                pass
-            else:
-                await context.bot.send_message(chat_id, text, reply_markup=markup)
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=text,
+            reply_markup=markup,
+        )
     else:
         await context.bot.send_message(chat_id, text, reply_markup=markup)
 
@@ -2383,6 +2413,7 @@ async def giveallcards(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ Выдано {len(missing)} новых карточек."
     )
 
+    admin_edit_state = {}  # user_id: {step, card_id}
 EDIT_CARDS_PER_PAGE = 20
 
 @admin_only
@@ -2515,29 +2546,18 @@ async def admin_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     state = admin_edit_state[user_id]
     if state.get("step") == "edit_stats":
         card_id = state.get("card_id")
-        card = get_card_from_cache(card_id)
-        raw_input = update.message.text
-        pos = card["pos"] if card else ""
-        new_stats = normalize_stats_input(raw_input, pos)
-        new_points = parse_points(new_stats, pos)
-
+        new_stats = update.message.text
         conn = get_db()
         c = conn.cursor()
-        c.execute(
-            "UPDATE cards SET stats = ?, points = ? WHERE id = ?",
-            (new_stats, new_points, card_id),
-        )
+        c.execute("UPDATE cards SET stats = ? WHERE id = ?", (new_stats, card_id))
         c.execute("SELECT name FROM cards WHERE id = ?", (card_id,))
         row = c.fetchone()
         conn.commit()
         name = row[0] if row else "карточка"
         conn.close()
-
         refresh_card_cache(card_id)
         invalidate_score_cache_for_card(card_id)
-        SCORE_CACHE.clear()
-
-        await update.message.reply_text("✅ Очки обновлены!")
+        await update.message.reply_text(f"✅ Поле <b>stats</b> карточки <b>{name}</b> обновлено на: <code>{new_stats}</code>", parse_mode='HTML')
     elif state.get("step") == "edit_name":
         card_id = state.get("card_id")
         new_name = update.message.text.strip()
