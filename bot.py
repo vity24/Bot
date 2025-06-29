@@ -2785,6 +2785,9 @@ def main():
     application.add_handler(CallbackQueryHandler(trade_page_callback, pattern="^trade_page_(prev|next)$"))
     application.add_handler(CommandHandler("editcard", editcard))
     application.add_handler(CallbackQueryHandler(editcard_callback, pattern="^(adminedit|admineditpage|admineditstat|admineditrarity|adminsetrarity)_?"))
+    application.add_handler(CommandHandler("rename_player", handlers.rename_player))
+    application.add_handler(CallbackQueryHandler(handlers.rename_select_callback, pattern="^rename_select:\d+$"))
+    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handlers.rename_player_text), group=5)
     application.add_handler(CommandHandler("myteam", handlers.show_my_team))
     application.add_handler(
         MessageHandler(filters.TEXT & (~filters.COMMAND), admin_text_handler),

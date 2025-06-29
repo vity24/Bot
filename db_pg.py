@@ -226,3 +226,26 @@ def update_win_streak(uid: int, won: bool):
     conn.commit()
     conn.close()
     return streak
+
+
+def get_all_players(limit: int = 20):
+    """Return a list of player ``(id, name)`` tuples ordered by name."""
+    conn = get_db()
+    cur = conn.execute(
+        'SELECT id, name FROM cards ORDER BY name LIMIT ?',
+        (limit,),
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+def update_player_name(player_id: int, new_name: str) -> None:
+    """Update player's name in the database."""
+    conn = get_db()
+    conn.execute(
+        'UPDATE cards SET name=? WHERE id=?',
+        (new_name, player_id),
+    )
+    conn.commit()
+    conn.close()
