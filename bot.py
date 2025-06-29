@@ -1616,7 +1616,11 @@ async def send_card_page(chat_id, context, cards, index=0, *, user_id=None, edit
             await context.bot.edit_message_media(
                 chat_id=chat_id,
                 message_id=message_id,
-                media=InputMediaPhoto(card.get("img", ""), caption=caption, parse_mode="Markdown"),
+                media=InputMediaPhoto(
+                    card.get("img", ""),
+                    caption=caption,
+                    parse_mode="Markdown",
+                ),
                 reply_markup=markup,
             )
         else:
@@ -1627,17 +1631,30 @@ async def send_card_page(chat_id, context, cards, index=0, *, user_id=None, edit
                 parse_mode="Markdown",
                 reply_markup=markup,
             )
-    except BadRequest:
+    except BadRequest as e:
+        # Ignore attempts to edit the message when nothing changed
+        if "Message is not modified" in str(e):
+            return
         if edit and message_id:
-            await context.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=message_id,
-                text=caption,
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=caption,
+                    reply_markup=markup,
+                    parse_mode="Markdown",
+                )
+            except BadRequest as e2:
+                if "There is no text in the message" in str(e2):
+                    return
+                raise
+        else:
+            await context.bot.send_message(
+                chat_id,
+                caption,
                 reply_markup=markup,
                 parse_mode="Markdown",
             )
-        else:
-            await context.bot.send_message(chat_id, caption, reply_markup=markup, parse_mode="Markdown")
 
 async def send_collection_page(
     chat_id,
@@ -1986,7 +2003,11 @@ async def collection_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     data = query.data
     uid = query.from_user.id
-    await query.answer()
+    try:
+        await query.answer()
+    except BadRequest:
+        # Ignore errors when the query is too old or already answered
+        pass
 
     nav = context.user_data.setdefault("coll_nav", ["collection"])
 
