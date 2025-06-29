@@ -290,78 +290,21 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # --- Кэш для карточек ---
-CARD_FIELDS = [
-    "id", "name", "img", "pos", "country", "born", "height",
-    "weight", "rarity", "stats", "team_en", "team_ru"
-]
-CARD_CACHE = {}
+from cache import (
+    CARD_CACHE,
+    CARD_FIELDS,
+    load_card_cache,
+    get_card_from_cache,
+    refresh_card_cache,
+    invalidate_score_cache_for_card,
+)
+
 RANK_CACHE: dict[int, tuple[int, int, float]] = {}
 SCORE_CACHE: dict[int, tuple[float, float]] = {}
 TOP_CACHE: tuple[list[tuple[int, str | None, float, int]], float] = ([], 0)
 RANK_TTL = 600  # seconds
 SCORE_TTL = 600  # seconds
 TOP_TTL = 600  # seconds
-
-def load_card_cache(force=False):
-    """Загружаем все карточки в память для сокращения обращений к БД."""
-    global CARD_CACHE
-    if CARD_CACHE and not force:
-        return
-    conn = get_db()
-    c = conn.cursor()
-    c.execute(
-        "SELECT id, name, img, pos, country, born, height, weight, rarity, stats, team_en, team_ru FROM cards"
-    )
-    rows = c.fetchall()
-    conn.close()
-    CARD_CACHE = {
-        row[0]: dict(zip(CARD_FIELDS, row))
-        for row in rows
-    }
-
-def get_card_from_cache(card_id):
-    """Возвращает информацию о карте из кэша, при необходимости подгружает её."""
-    if card_id not in CARD_CACHE:
-        conn = get_db()
-        c = conn.cursor()
-        c.execute(
-            "SELECT id, name, img, pos, country, born, height, weight, rarity, stats, team_en, team_ru FROM cards WHERE id=?",
-            (card_id,),
-        )
-        row = c.fetchone()
-        conn.close()
-        if row:
-            CARD_CACHE[card_id] = dict(zip(CARD_FIELDS, row))
-        else:
-            return None
-    return CARD_CACHE.get(card_id)
-
-def refresh_card_cache(card_id):
-    """Обновляем кэш для конкретной карты или очищаем её."""
-    conn = get_db()
-    c = conn.cursor()
-    c.execute(
-        "SELECT id, name, img, pos, country, born, height, weight, rarity, stats, team_en, team_ru FROM cards WHERE id=?",
-        (card_id,),
-    )
-    row = c.fetchone()
-    conn.close()
-    if row:
-        CARD_CACHE[card_id] = dict(zip(CARD_FIELDS, row))
-    else:
-        CARD_CACHE.pop(card_id, None)
-
-def invalidate_score_cache_for_card(card_id: int) -> None:
-    """Reset cached scores and ranks for users owning the given card."""
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT DISTINCT user_id FROM inventory WHERE card_id=?", (card_id,))
-    user_ids = [row[0] for row in cur.fetchall()]
-    conn.close()
-    for uid in user_ids:
-        SCORE_CACHE.pop(uid, None)
-        RANK_CACHE.pop(uid, None)
-    globals()['TOP_CACHE'] = ([], 0)
 
 POS_RU = {
     "C": "Центр",
