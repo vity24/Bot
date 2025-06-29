@@ -1126,7 +1126,7 @@ async def rename_player_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
     new_name = update.message.text.strip()
     db.update_player_name(pid, new_name)
     context.user_data.pop("rename_player", None)
-    from bot import refresh_card_cache
+    from cache import refresh_card_cache
     refresh_card_cache(pid)
     await update.message.reply_text(f"✅ Игрок теперь известен как {new_name}!")
 
