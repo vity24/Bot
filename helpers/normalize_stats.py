@@ -2,7 +2,7 @@ import re
 
 
 def normalize_stats_input(raw: str, pos: str) -> str:
-    """Приводит сырую строку из /editcard к каноническому формату."""
+    """Приводит сырую строку к каноническому формату."""
     raw = raw.strip()
     if pos == "G":
         m = re.fullmatch(r"(\d+)\s+([\d.,]+)", raw)
