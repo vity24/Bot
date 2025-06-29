@@ -605,6 +605,7 @@ def update_card_points(card_id: int) -> None:
     conn.commit()
     conn.close()
     refresh_card_cache(card_id)
+    invalidate_score_cache_for_card(card_id)
 
 def format_card_caption(
     card: dict,
