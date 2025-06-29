@@ -69,17 +69,22 @@ async def apply_xp(uid: int, result: dict, opponent_is_bot: bool, context: Conte
 
 def _parse_points(stats: str | None, pos: str | None) -> float:
     """Extract point value from stats text."""
-    if (pos or "") == "G":
+    stats = stats or ""
+    pos = pos or ""
+    if pos == "G":
         win = 0
         gaa = 3.0
-        m_win = re.search(r"Поб\s+(\d+)", stats or "")
-        m_gaa = re.search(r"КН\s*([\d.]+)", stats or "")
+        m_win = re.search(r"Поб\s+(\d+)", stats)
+        m_gaa = re.search(r"КН\s*([\d.,]+)", stats)
         if m_win:
             win = int(m_win.group(1))
         if m_gaa:
-            gaa = float(m_gaa.group(1))
+            try:
+                gaa = float(m_gaa.group(1).replace(",", "."))
+            except ValueError:
+                gaa = 3.0
         return win * 2 + (30 - gaa * 10)
-    m = re.search(r"Очки\s+(\d+)", stats or "")
+    m = re.search(r"Очки\s+(\d+)", stats)
     return float(m.group(1)) if m else 0.0
 
 
