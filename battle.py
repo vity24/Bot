@@ -97,6 +97,17 @@ FIGHT_ACTIONS = [
     "бросает перчатки и дерётся!",
 ]
 
+# --- направления атак ---
+DIRECTIONS = ["left", "center", "right"]
+DIRECTION_WEIGHTS = [0.3, 0.4, 0.3]
+DIR_ATTACK = {"left": "слева", "center": "по центру", "right": "справа"}
+DIR_GOALIE = {
+    "left": "в левом углу",
+    "center": "в центре",
+    "right": "в правом углу",
+}
+DIR_BLOCK = {"left": "левый фланг", "center": "центр", "right": "правый фланг"}
+
 
 class BattleSession:
     def __init__(self, team1: List[Dict], team2: List[Dict], tactic1: str = "balanced", tactic2: str = "balanced", name1: str = "team1", name2: str = "team2"):
@@ -243,15 +254,29 @@ class BattleSession:
             "period": self.current_period,
         })
 
-    def _attempt_goal(self, attacker: Dict, goalie: Dict, attack_mod: float, defense_mod: float) -> bool:
+    def _attempt_goal(
+        self,
+        attacker: Dict,
+        goalie: Dict,
+        attack_mod: float,
+        defense_mod: float,
+        guessed: bool = False,
+    ) -> bool:
         atk = attacker["strength"] * attack_mod
         df = goalie["strength"] * defense_mod
-        chance = atk / (atk + df)
-        return random.random() < chance
+        chance_goal = atk / (atk + df)
+        if guessed:
+            save_chance = min(1.0, (1 - chance_goal) * 1.2)
+            chance_goal = 1 - save_chance
+        return random.random() < chance_goal
 
     def _apply_fatigue(self, team: List[Dict]):
         for p in team:
             p["strength"] *= random.uniform(0.97, 1.0)
+
+    def _direction(self) -> str:
+        """Randomly choose attack direction."""
+        return random.choices(DIRECTIONS, DIRECTION_WEIGHTS)[0]
 
     def _simulate_period(self, attack_mod1: float, defense_mod1: float,
                          attack_mod2: float, defense_mod2: float,
@@ -261,6 +286,8 @@ class BattleSession:
         for _ in range(5):
             attacker_team1 = self._attacker(self.team1)
             goalie_team2 = self._goalie(self.team2)
+            direction = self._direction()
+            guess = self._direction()
             if random.random() < 0.02:
                 attacker_team1["injured"] = True
                 self._log_action(1, attacker_team1, random.choice(INJURY_ACTIONS), "injury")
@@ -270,7 +297,7 @@ class BattleSession:
                 self._log_action(1, attacker_team1, random.choice(FIGHT_ACTIONS), "fight")
             else:
                 shot_power = attacker_team1["strength"] * attack_mod1
-                scored = self._attempt_goal(attacker_team1, goalie_team2, attack_mod1, defense_mod2)
+                scored = self._attempt_goal(attacker_team1, goalie_team2, attack_mod1, defense_mod2, direction == guess)
                 goalie_error = False
                 if not scored and goalie_team2["strength"] < 60 and shot_power > 80 and random.random() < 0.15:
                     scored = True
@@ -280,7 +307,7 @@ class BattleSession:
                     self.contribution[attacker_team1["name"]] += 1
                     self.goals.append({"player": attacker_team1["name"], "team": self.name1, "period": self.current_period})
                     etype = "goalie_error" if goalie_error else "goal"
-                    self._log_action(1, attacker_team1, random.choice(GOAL_ACTIONS), etype)
+                    self._log_action(1, attacker_team1, f"Атака {DIR_ATTACK[direction]}! " + random.choice(GOAL_ACTIONS), etype)
                     if sudden_death:
                         self._apply_fatigue(self.team1)
                         self._apply_fatigue(self.team2)
@@ -289,20 +316,22 @@ class BattleSession:
                     self.contribution[goalie_team2["name"]] += 1
                     r = random.random()
                     if r < 0.1:
-                        self._log_action(1, attacker_team1, random.choice(POST_ACTIONS), "post")
+                        self._log_action(1, attacker_team1, f"Атака {DIR_ATTACK[direction]}! " + random.choice(POST_ACTIONS), "post")
                     elif r < 0.35:
                         defender = self._defender(self.team2)
-                        self._log_action(2, defender, random.choice(BLOCK_ACTIONS), "block")
+                        self._log_action(2, defender, f"перекрыл {DIR_BLOCK[direction]} — " + random.choice(BLOCK_ACTIONS), "block")
                     elif r < 0.55:
-                        self._log_action(1, attacker_team1, random.choice(MISS_ACTIONS), "miss")
+                        self._log_action(1, attacker_team1, f"Атака {DIR_ATTACK[direction]}! " + random.choice(MISS_ACTIONS), "miss")
                     else:
-                        self._log_action(2, goalie_team2, random.choice(SAVE_ACTIONS), "save")
+                        self._log_action(2, goalie_team2, random.choice(SAVE_ACTIONS) + f" {DIR_GOALIE[direction]}", "save")
                         if random.random() < 0.03:
                             goalie_team2["strength"] *= 0.9
                             self._log_action(2, goalie_team2, "получает микротравму", "goalie_injury")
 
             attacker_team2 = self._attacker(self.team2)
             goalie_team1 = self._goalie(self.team1)
+            direction = self._direction()
+            guess = self._direction()
             if random.random() < 0.02:
                 attacker_team2["injured"] = True
                 self._log_action(2, attacker_team2, random.choice(INJURY_ACTIONS), "injury")
@@ -312,7 +341,7 @@ class BattleSession:
                 self._log_action(2, attacker_team2, random.choice(FIGHT_ACTIONS), "fight")
             else:
                 shot_power = attacker_team2["strength"] * attack_mod2
-                scored = self._attempt_goal(attacker_team2, goalie_team1, attack_mod2, defense_mod1)
+                scored = self._attempt_goal(attacker_team2, goalie_team1, attack_mod2, defense_mod1, direction == guess)
                 goalie_error = False
                 if not scored and goalie_team1["strength"] < 60 and shot_power > 80 and random.random() < 0.15:
                     scored = True
@@ -322,7 +351,7 @@ class BattleSession:
                     self.contribution[attacker_team2["name"]] += 1
                     self.goals.append({"player": attacker_team2["name"], "team": self.name2, "period": self.current_period})
                     etype = "goalie_error" if goalie_error else "goal"
-                    self._log_action(2, attacker_team2, random.choice(GOAL_ACTIONS), etype)
+                    self._log_action(2, attacker_team2, f"Атака {DIR_ATTACK[direction]}! " + random.choice(GOAL_ACTIONS), etype)
                     if sudden_death:
                         self._apply_fatigue(self.team1)
                         self._apply_fatigue(self.team2)
@@ -331,14 +360,14 @@ class BattleSession:
                     self.contribution[goalie_team1["name"]] += 1
                     r = random.random()
                     if r < 0.1:
-                        self._log_action(2, attacker_team2, random.choice(POST_ACTIONS), "post")
+                        self._log_action(2, attacker_team2, f"Атака {DIR_ATTACK[direction]}! " + random.choice(POST_ACTIONS), "post")
                     elif r < 0.35:
                         defender = self._defender(self.team1)
-                        self._log_action(1, defender, random.choice(BLOCK_ACTIONS), "block")
+                        self._log_action(1, defender, f"перекрыл {DIR_BLOCK[direction]} — " + random.choice(BLOCK_ACTIONS), "block")
                     elif r < 0.55:
-                        self._log_action(2, attacker_team2, random.choice(MISS_ACTIONS), "miss")
+                        self._log_action(2, attacker_team2, f"Атака {DIR_ATTACK[direction]}! " + random.choice(MISS_ACTIONS), "miss")
                     else:
-                        self._log_action(1, goalie_team1, random.choice(SAVE_ACTIONS), "save")
+                        self._log_action(1, goalie_team1, random.choice(SAVE_ACTIONS) + f" {DIR_GOALIE[direction]}", "save")
                         if random.random() < 0.03:
                             goalie_team1["strength"] *= 0.9
                             self._log_action(1, goalie_team1, "получает микротравму", "goalie_injury")
