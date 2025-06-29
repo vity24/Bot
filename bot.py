@@ -290,7 +290,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # --- Кэш для карточек ---
-from cache import (
+from card_cache import (
     CARD_CACHE,
     CARD_FIELDS,
     load_card_cache,
