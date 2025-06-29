@@ -586,6 +586,22 @@ def extract_goalie_stats(stats: str | None) -> tuple[str, str]:
     kn = m_kn.group(1) if m_kn else "0"
     return wins, kn
 
+def update_card_points(card_id: int) -> None:
+    """Recalculate and store points value for a card."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT pos, stats FROM cards WHERE id=?", (card_id,))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return
+    pos, stats = row
+    points = parse_points(stats, pos)
+    cur.execute("UPDATE cards SET points=? WHERE id=?", (points, card_id))
+    conn.commit()
+    conn.close()
+    refresh_card_cache(card_id)
+
 def format_card_caption(
     card: dict,
     *,
@@ -2555,6 +2571,7 @@ async def admin_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         conn.commit()
         name = row[0] if row else "карточка"
         conn.close()
+        update_card_points(card_id)
         refresh_card_cache(card_id)
         invalidate_score_cache_for_card(card_id)
         await update.message.reply_text(f"✅ Поле <b>stats</b> карточки <b>{name}</b> обновлено на: <code>{new_stats}</code>", parse_mode='HTML')
