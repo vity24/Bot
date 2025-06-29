@@ -51,7 +51,7 @@ from collections import Counter
 from functools import wraps
 import handlers
 import db_pg as db
-from cards import get_card
+from cards import get_card, CARD_FIELDS
 from helpers.leveling import xp_to_next
 from helpers import shorten_number, format_ranking_row, format_my_rank
 from helpers.styles import get_player_style
@@ -296,6 +296,15 @@ TOP_CACHE: tuple[list[tuple[int, str | None, float, int]], float] = ([], 0)
 RANK_TTL = 600  # seconds
 SCORE_TTL = 600  # seconds
 TOP_TTL = 600  # seconds
+CARD_POINTS_CACHE: dict[int, float] = {}
+
+def get_card_points(card_id: int, pos: str | None, stats: str | None) -> float:
+    val = CARD_POINTS_CACHE.get(card_id)
+    if val is not None:
+        return val
+    val = parse_points(stats, pos)
+    CARD_POINTS_CACHE[card_id] = val
+    return val
 
 def invalidate_score_cache_for_card(card_id: int) -> None:
     """Reset cached scores and ranks for users owning the given card."""
@@ -583,22 +592,24 @@ def format_card_caption(
 def _calculate_user_score_sync(user_id):
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT card_id FROM inventory WHERE user_id=?", (user_id,))
-    card_ids = [row[0] for row in c.fetchall()]
+    c.execute(
+        """
+        SELECT cards.id, cards.pos, cards.stats, cards.rarity, COUNT(*)
+          FROM inventory
+          JOIN cards ON inventory.card_id = cards.id
+         WHERE inventory.user_id=?
+      GROUP BY cards.id, cards.pos, cards.stats, cards.rarity
+        """,
+        (user_id,),
+    )
+    rows = c.fetchall()
     conn.close()
 
-    counts = Counter(card_ids)
     total_score = 0
-    for card_id, count in counts.items():
-        card = get_card(card_id)
-        if not card:
-            continue
-        pos = card["pos"]
-        stats = card["stats"]
-        rarity = card["rarity"]
-        points = parse_points(stats, pos)
+    for cid, pos, stats, rarity, count in rows:
+        pts = get_card_points(cid, pos, stats)
         mult = RARITY_MULTIPLIERS.get(rarity, 1)
-        total_score += points * mult * count
+        total_score += pts * mult * count
 
     return total_score
 
@@ -1406,21 +1417,31 @@ def add_card(user_id, card_id):
 def get_full_cards_for_user(user_id):
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT card_id FROM inventory WHERE user_id=?", (user_id,))
-    ids = [r[0] for r in c.fetchall()]
+    c.execute(
+        """
+        SELECT cards.id, cards.name, cards.img, cards.pos, cards.country,
+               cards.born, cards.height, cards.weight, cards.rarity,
+               cards.stats, cards.team_en, cards.team_ru, COUNT(*)
+          FROM inventory
+          JOIN cards ON inventory.card_id = cards.id
+         WHERE inventory.user_id=?
+      GROUP BY cards.id, cards.name, cards.img, cards.pos, cards.country,
+               cards.born, cards.height, cards.weight, cards.rarity,
+               cards.stats, cards.team_en, cards.team_ru
+        """,
+        (user_id,),
+    )
+    rows = c.fetchall()
     conn.close()
 
-    count_dict = Counter(ids)
     cards = []
     total_count = 0
-    for cid, cnt in count_dict.items():
-        card = get_card(cid)
-        if not card:
-            continue
-        card_copy = card.copy()
-        card_copy["count"] = cnt
-        cards.append(card_copy)
-        total_count += cnt
+    for row in rows:
+        card = dict(zip(CARD_FIELDS, row[:-1]))
+        count = row[-1]
+        card["count"] = count
+        cards.append(card)
+        total_count += count
 
     return cards, total_count
 
@@ -1567,7 +1588,17 @@ def build_filtered_cards(user_id, *, rarity=None, club=None, new_only=False, dup
     cards.sort(key=lambda c: (RARITY_ORDER.get(c.get("rarity", "common"), 99), c.get("name", "")))
     return cards
 
-async def send_card_page(chat_id, context, cards, index=0, *, user_id=None, edit=False, message_id=None):
+async def send_card_page(
+    chat_id,
+    context,
+    cards,
+    index=0,
+    *,
+    user_id=None,
+    edit=False,
+    message_id=None,
+    total_cards=None,
+):
     """Send or edit a single card with navigation buttons."""
     if not cards:
         await context.bot.send_message(chat_id, "У тебя нет карточек по этому фильтру.")
@@ -1588,8 +1619,7 @@ async def send_card_page(chat_id, context, cards, index=0, *, user_id=None, edit
         filter_name = "В команде"
     else:
         filter_name = "Все"
-    total_cards = None
-    if user_id:
+    if total_cards is None and user_id:
         _, total_cards = get_inventory_counts(user_id)
     caption = format_card_caption(
         card,
@@ -2033,8 +2063,24 @@ async def collection_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         if state.startswith("rarity_"):
             rarity = state.split("_", 1)[1]
             cards = build_filtered_cards(uid, rarity=rarity)
-            context.user_data["coll"] = {"rarity": rarity, "mode": "carousel", "index": 0, "cards": cards}
-            await send_card_page(query.message.chat_id, context, cards, index=0, user_id=uid, edit=True, message_id=query.message.message_id)
+            _, total = get_inventory_counts(uid)
+            context.user_data["coll"] = {
+                "rarity": rarity,
+                "mode": "carousel",
+                "index": 0,
+                "cards": cards,
+                "total": total,
+            }
+            await send_card_page(
+                query.message.chat_id,
+                context,
+                cards,
+                index=0,
+                user_id=uid,
+                edit=True,
+                message_id=query.message.message_id,
+                total_cards=total,
+            )
             return
         if state.startswith("clubpage_"):
             page = int(state.split("_")[1])
@@ -2047,23 +2093,87 @@ async def collection_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         if state.startswith("club_"):
             club = state[5:]
             cards = build_filtered_cards(uid, club=club)
-            context.user_data["coll"] = {"club": club, "mode": "carousel", "index": 0, "cards": cards}
-            await send_card_page(query.message.chat_id, context, cards, index=0, user_id=uid, edit=True, message_id=query.message.message_id)
+            _, total = get_inventory_counts(uid)
+            context.user_data["coll"] = {
+                "club": club,
+                "mode": "carousel",
+                "index": 0,
+                "cards": cards,
+                "total": total,
+            }
+            await send_card_page(
+                query.message.chat_id,
+                context,
+                cards,
+                index=0,
+                user_id=uid,
+                edit=True,
+                message_id=query.message.message_id,
+                total_cards=total,
+            )
             return
         if state == "duplicates":
             cards = build_filtered_cards(uid, duplicates=True)
-            context.user_data["coll"] = {"duplicates": True, "mode": "carousel", "index": 0, "cards": cards}
-            await send_card_page(query.message.chat_id, context, cards, index=0, user_id=uid, edit=True, message_id=query.message.message_id)
+            _, total = get_inventory_counts(uid)
+            context.user_data["coll"] = {
+                "duplicates": True,
+                "mode": "carousel",
+                "index": 0,
+                "cards": cards,
+                "total": total,
+            }
+            await send_card_page(
+                query.message.chat_id,
+                context,
+                cards,
+                index=0,
+                user_id=uid,
+                edit=True,
+                message_id=query.message.message_id,
+                total_cards=total,
+            )
             return
         if state == "new":
             cards = build_filtered_cards(uid, new_only=True)
-            context.user_data["coll"] = {"new_only": True, "mode": "carousel", "index": 0, "cards": cards}
-            await send_card_page(query.message.chat_id, context, cards, index=0, user_id=uid, edit=True, message_id=query.message.message_id)
+            _, total = get_inventory_counts(uid)
+            context.user_data["coll"] = {
+                "new_only": True,
+                "mode": "carousel",
+                "index": 0,
+                "cards": cards,
+                "total": total,
+            }
+            await send_card_page(
+                query.message.chat_id,
+                context,
+                cards,
+                index=0,
+                user_id=uid,
+                edit=True,
+                message_id=query.message.message_id,
+                total_cards=total,
+            )
             return
         if state == "team":
             cards, _ = get_team_cards(uid)
-            context.user_data["coll"] = {"team": True, "mode": "carousel", "index": 0, "cards": cards}
-            await send_card_page(query.message.chat_id, context, cards, index=0, user_id=uid, edit=True, message_id=query.message.message_id)
+            _, total = get_inventory_counts(uid)
+            context.user_data["coll"] = {
+                "team": True,
+                "mode": "carousel",
+                "index": 0,
+                "cards": cards,
+                "total": total,
+            }
+            await send_card_page(
+                query.message.chat_id,
+                context,
+                cards,
+                index=0,
+                user_id=uid,
+                edit=True,
+                message_id=query.message.message_id,
+                total_cards=total,
+            )
             return
         if state.startswith("all_page_"):
             page = int(state.split("_")[2])
@@ -2158,6 +2268,7 @@ async def collection_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 user_id=uid,
                 edit=True,
                 message_id=query.message.message_id,
+                total_cards=state.get("total"),
             )
         else:
             page = state.get("page", 0)
