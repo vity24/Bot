@@ -7,3 +7,7 @@ def test_field_player():
 
 def test_goalkeeper():
     assert normalize_stats_input("33 2.22", "G") == "Поб 33 КН 2.22"
+
+
+def test_goalkeeper_comma():
+    assert normalize_stats_input("33 2,22", "G") == "Поб 33 КН 2,22"
