@@ -36,6 +36,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
     ContextTypes,
+    DictPersistence,
 )
 from telegram.error import BadRequest, NetworkError
 from telegram import (
@@ -2759,6 +2760,7 @@ def main():
     application = (
         Application.builder()
         .token(TOKEN)
+        .persistence(DictPersistence())
         .post_init(post_init)
         .build()
     )
