@@ -7,6 +7,7 @@ import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 from telegram.error import Forbidden
+from helpers.permissions import admin_only, is_admin
 from battle import BattleSession, BattleController, POSITION_EMOJI
 import db_pg as db
 from helpers.leveling import level_from_xp, xp_to_next, calc_battle_xp
@@ -1021,6 +1022,51 @@ async def show_battle_history(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text("\n\n".join(parts), reply_markup=InlineKeyboardMarkup([
         [InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")]
     ]))
+
+
+@admin_only
+async def rename_player(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show list of players for renaming."""
+    players = db.get_all_players()
+    if not players:
+        await update.message.reply_text("Игроки не найдены.")
+        return
+    buttons = [
+        [InlineKeyboardButton(f"👤 {name}", callback_data=f"rename_select:{pid}")]
+        for pid, name in players
+    ]
+    markup = InlineKeyboardMarkup(buttons)
+    await update.message.reply_text(
+        "Выберите игрока:", reply_markup=markup
+    )
+
+
+async def rename_select_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(query.from_user.id):
+        return
+    if not query.data.startswith("rename_select:"):
+        return
+    pid = int(query.data.split(":")[1])
+    name = get_card_name(pid)
+    context.user_data["rename_player"] = {"id": pid}
+    await query.edit_message_text(f"✍️ Введи новое имя для {name}:")
+
+
+async def rename_player_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    state = context.user_data.get("rename_player")
+    if not state:
+        return
+    if not is_admin(update.effective_user.id):
+        return
+    pid = state.get("id")
+    new_name = update.message.text.strip()
+    db.update_player_name(pid, new_name)
+    context.user_data.pop("rename_player", None)
+    from bot import refresh_card_cache
+    refresh_card_cache(pid)
+    await update.message.reply_text(f"✅ Игрок теперь известен как {new_name}!")
 
 
 def cleanup_pvp_queue():
