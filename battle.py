@@ -128,6 +128,8 @@ class BattleSession:
         self.avg_power2 = sum(p["strength"] for p in self.team2) / len(self.team2)
         self.str_gap = (self.avg_power2 - self.avg_power1) / max(self.avg_power1, 1)
         self.current_period = 0
+        # optional direction chosen by the user for the next attack
+        self.user_attack_dir: str | None = None
 
     @staticmethod
     def _age(player: Dict) -> int:
@@ -286,8 +288,11 @@ class BattleSession:
         for _ in range(5):
             attacker_team1 = self._attacker(self.team1)
             goalie_team2 = self._goalie(self.team2)
-            direction = self._direction()
+            direction = self.user_attack_dir or self._direction()
             guess = self._direction()
+            # consume user-selected direction so next attack is random
+            if self.user_attack_dir:
+                self.user_attack_dir = None
             if random.random() < 0.02:
                 attacker_team1["injured"] = True
                 self._log_action(1, attacker_team1, random.choice(INJURY_ACTIONS), "injury")
