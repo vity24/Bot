@@ -168,6 +168,13 @@ TACTICS = {
     "tactic_balanced": "balanced",
 }
 
+# map direction callbacks to attack direction values
+DIR_MAP = {
+    "dir_left": "left",
+    "dir_center": "center",
+    "dir_right": "right",
+}
+
 # simple mapping of rarity to emoji for buttons
 RARITY_EMOJI = {
     "legendary": "⭐️",
@@ -457,11 +464,7 @@ async def team_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
 
     # map direction callbacks to attack direction values
-    dir_map = {
-        "dir_left": "left",
-        "dir_center": "center",
-        "dir_right": "right",
-    }
+    dir_map = DIR_MAP
 
     if data == "team_edit":
         team = db.get_team(query.from_user.id)
@@ -834,8 +837,8 @@ async def battle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     score = controller.session.score
 
     # handle direction choice
-    if data in dir_map:
-        context.user_data["attack_dir"] = dir_map[data]
+    if data in DIR_MAP:
+        context.user_data["attack_dir"] = DIR_MAP[data]
         tactic = context.user_data.pop("pending_tactic", "balanced")
         prev_phase = context.user_data.pop("pending_phase", phase)
         controller.session.user_attack_dir = context.user_data["attack_dir"]
