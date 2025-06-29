@@ -2519,18 +2519,24 @@ async def admin_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         raw_input = update.message.text
         pos = card["pos"] if card else ""
         new_stats = normalize_stats_input(raw_input, pos)
+        new_points = parse_points(new_stats, pos)
+
         conn = get_db()
         c = conn.cursor()
-        c.execute("UPDATE cards SET stats = ? WHERE id = ?", (new_stats, card_id))
+        c.execute(
+            "UPDATE cards SET stats = ?, points = ? WHERE id = ?",
+            (new_stats, new_points, card_id),
+        )
         c.execute("SELECT name FROM cards WHERE id = ?", (card_id,))
         row = c.fetchone()
         conn.commit()
         name = row[0] if row else "карточка"
         conn.close()
-        update_card_points(card_id)
+
         refresh_card_cache(card_id)
         invalidate_score_cache_for_card(card_id)
         SCORE_CACHE.clear()
+
         await update.message.reply_text("✅ Очки обновлены!")
     elif state.get("step") == "edit_name":
         card_id = state.get("card_id")
