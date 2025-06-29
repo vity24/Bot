@@ -456,6 +456,13 @@ async def team_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tb = context.user_data.get("team_build")
     data = query.data
 
+    # map direction callbacks to attack direction values
+    dir_map = {
+        "dir_left": "left",
+        "dir_center": "center",
+        "dir_right": "right",
+    }
+
     if data == "team_edit":
         team = db.get_team(query.from_user.id)
         if team:
@@ -825,50 +832,59 @@ async def battle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phase = controller.phase
     log = controller.session.log
     score = controller.session.score
-    if phase == "p1":
-        tactic = data.split("_")[1]
+
+    # handle direction choice
+    if data in dir_map:
+        context.user_data["attack_dir"] = dir_map[data]
+        tactic = context.user_data.pop("pending_tactic", "balanced")
+        prev_phase = context.user_data.pop("pending_phase", phase)
+        controller.session.user_attack_dir = context.user_data["attack_dir"]
         controller.step(tactic, random.choice(list(TACTICS.values())))
-        text = format_period_summary(controller.session)
-        keyboard = [
-            [InlineKeyboardButton("🔁 Сделать замену", callback_data="battle_change")],
-            [InlineKeyboardButton("⚔️ Уйти в атаку", callback_data="battle_attack")],
-            [InlineKeyboardButton("🛡 Укрепить оборону", callback_data="battle_defense")],
-        ]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
-    elif phase == "p2":
-        if data == "battle_change":
-            tactic = "balanced"
-        elif data == "battle_attack":
-            tactic = "aggressive"
-        else:
-            tactic = "defensive"
-        controller.step(tactic, random.choice(list(TACTICS.values())))
-        text = format_period_summary(controller.session)
-        keyboard = [
-            [InlineKeyboardButton("⚡️ Давить до конца", callback_data="battle_pressure")],
-            [InlineKeyboardButton("⛔️ Уйти в оборону", callback_data="battle_hold")],
-            [InlineKeyboardButton("♻️ Играть на ничью", callback_data="battle_tie")],
-        ]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
-    elif phase == "p3":
-        if data == "battle_pressure":
-            tactic = "aggressive"
-        elif data == "battle_hold":
-            tactic = "defensive"
-        else:
-            tactic = "balanced"
-        controller.step(tactic, random.choice(list(TACTICS.values())))
-        if controller.phase == "ot":
-            text = (
-                f"{summary(controller.session.log)}\nСчёт: {controller.session.score['team1']} - {controller.session.score['team2']}\n"
-                "🟰 Ничья! Овертайм:"
-            )
+        context.user_data.pop("attack_dir", None)
+
+        if prev_phase == "p1":
+            text = format_period_summary(controller.session)
             keyboard = [
-                [InlineKeyboardButton("⚔️ Давим до гола!", callback_data="battle_ot_attack")],
-                [InlineKeyboardButton("🩻 Осторожно — ловим ошибку", callback_data="battle_ot_careful")],
+                [InlineKeyboardButton("🔁 Сделать замену", callback_data="battle_change")],
+                [InlineKeyboardButton("⚔️ Уйти в атаку", callback_data="battle_attack")],
+                [InlineKeyboardButton("🛡 Укрепить оборону", callback_data="battle_defense")],
             ]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
-        else:
+        elif prev_phase == "p2":
+            text = format_period_summary(controller.session)
+            keyboard = [
+                [InlineKeyboardButton("⚡️ Давить до конца", callback_data="battle_pressure")],
+                [InlineKeyboardButton("⛔️ Уйти в оборону", callback_data="battle_hold")],
+                [InlineKeyboardButton("♻️ Играть на ничью", callback_data="battle_tie")],
+            ]
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+        elif prev_phase == "p3":
+            if controller.phase == "ot":
+                text = (
+                    f"{summary(controller.session.log)}\nСчёт: {controller.session.score['team1']} - {controller.session.score['team2']}\n"
+                    "🟰 Ничья! Овертайм:"
+                )
+                keyboard = [
+                    [InlineKeyboardButton("⚔️ Давим до гола!", callback_data="battle_ot_attack")],
+                    [InlineKeyboardButton("🩻 Осторожно — ловим ошибку", callback_data="battle_ot_careful")],
+                ]
+                await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+            else:
+                result = controller.session.finish()
+                xp_gain, lvl, up = await apply_xp(query.from_user.id, result, True, context)
+                summary_text = format_final_summary(controller.session, result, xp_gain, lvl, up)
+                await query.edit_message_text(
+                    summary_text,
+                    reply_markup=InlineKeyboardMarkup(
+                        [
+                            [InlineKeyboardButton("⚙ Управление командой", callback_data="open_team")],
+                            [InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")],
+                        ]
+                    ),
+                    parse_mode="HTML",
+                )
+                state.clear()
+        elif prev_phase == "ot":
             result = controller.session.finish()
             xp_gain, lvl, up = await apply_xp(query.from_user.id, result, True, context)
             summary_text = format_final_summary(controller.session, result, xp_gain, lvl, up)
@@ -883,23 +899,58 @@ async def battle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="HTML",
             )
             state.clear()
+        return
+
+    if phase == "p1":
+        tactic = data.split("_")[1]
+        context.user_data["pending_tactic"] = tactic
+        context.user_data["pending_phase"] = phase
+        keyboard = [
+            [InlineKeyboardButton("⬅ Слева", callback_data="dir_left")],
+            [InlineKeyboardButton("⬆ По центру", callback_data="dir_center")],
+            [InlineKeyboardButton("➡ Справа", callback_data="dir_right")],
+        ]
+        await query.edit_message_text("Выбери направление атаки", reply_markup=InlineKeyboardMarkup(keyboard))
+    elif phase == "p2":
+        if data == "battle_change":
+            tactic = "balanced"
+        elif data == "battle_attack":
+            tactic = "aggressive"
+        else:
+            tactic = "defensive"
+        context.user_data["pending_tactic"] = tactic
+        context.user_data["pending_phase"] = phase
+        keyboard = [
+            [InlineKeyboardButton("⬅ Слева", callback_data="dir_left")],
+            [InlineKeyboardButton("⬆ По центру", callback_data="dir_center")],
+            [InlineKeyboardButton("➡ Справа", callback_data="dir_right")],
+        ]
+        await query.edit_message_text("Выбери направление атаки", reply_markup=InlineKeyboardMarkup(keyboard))
+    elif phase == "p3":
+        if data == "battle_pressure":
+            tactic = "aggressive"
+        elif data == "battle_hold":
+            tactic = "defensive"
+        else:
+            tactic = "balanced"
+        context.user_data["pending_tactic"] = tactic
+        context.user_data["pending_phase"] = phase
+        keyboard = [
+            [InlineKeyboardButton("⬅ Слева", callback_data="dir_left")],
+            [InlineKeyboardButton("⬆ По центру", callback_data="dir_center")],
+            [InlineKeyboardButton("➡ Справа", callback_data="dir_right")],
+        ]
+        await query.edit_message_text("Выбери направление атаки", reply_markup=InlineKeyboardMarkup(keyboard))
     elif phase == "ot":
         tactic = "aggressive" if data == "battle_ot_attack" else "defensive"
-        controller.step(tactic, random.choice(list(TACTICS.values())))
-        result = controller.session.finish()
-        xp_gain, lvl, up = await apply_xp(query.from_user.id, result, True, context)
-        summary_text = format_final_summary(controller.session, result, xp_gain, lvl, up)
-        await query.edit_message_text(
-            summary_text,
-            reply_markup=InlineKeyboardMarkup(
-                [
-                    [InlineKeyboardButton("⚙ Управление командой", callback_data="open_team")],
-                    [InlineKeyboardButton("🏠 Вернуться в меню", callback_data="menu_back")],
-                ]
-            ),
-            parse_mode="HTML",
-        )
-        state.clear()
+        context.user_data["pending_tactic"] = tactic
+        context.user_data["pending_phase"] = phase
+        keyboard = [
+            [InlineKeyboardButton("⬅ Слева", callback_data="dir_left")],
+            [InlineKeyboardButton("⬆ По центру", callback_data="dir_center")],
+            [InlineKeyboardButton("➡ Справа", callback_data="dir_right")],
+        ]
+        await query.edit_message_text("Выбери направление атаки", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def _handle_pvp_battle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
