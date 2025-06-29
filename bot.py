@@ -2479,7 +2479,6 @@ async def giveallcards(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ Выдано {len(missing)} новых карточек."
     )
 
-    admin_edit_state = {}  # user_id: {step, card_id}
 EDIT_CARDS_PER_PAGE = 20
 
 @admin_only
