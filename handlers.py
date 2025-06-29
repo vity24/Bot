@@ -829,6 +829,9 @@ async def battle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = query.data
 
+    # map direction callbacks to attack direction values
+    dir_map = DIR_MAP
+
     def summary(lines):
         return "\n".join(lines[-3:]) if lines else ""
 
@@ -837,8 +840,8 @@ async def battle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     score = controller.session.score
 
     # handle direction choice
-    if data in DIR_MAP:
-        context.user_data["attack_dir"] = DIR_MAP[data]
+    if data in dir_map:
+        context.user_data["attack_dir"] = dir_map[data]
         tactic = context.user_data.pop("pending_tactic", "balanced")
         prev_phase = context.user_data.pop("pending_phase", phase)
         controller.session.user_attack_dir = context.user_data["attack_dir"]
