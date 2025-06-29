@@ -520,11 +520,14 @@ def parse_points(stats, pos):
         win = 0
         gaa = 3.0
         m_win = re.search(r'Поб\s+(\d+)', stats or "")
-        m_gaa = re.search(r'КН\s*([\d.]+)', stats or "")
+        m_gaa = re.search(r'КН\s*([\d.,]+)', stats or "")
         if m_win:
             win = int(m_win.group(1))
         if m_gaa:
-            gaa = float(m_gaa.group(1))
+            try:
+                gaa = float(m_gaa.group(1).replace(",", "."))
+            except ValueError:
+                gaa = 3.0
         return win * 2 + (30 - gaa * 10)
     else:
         m = re.search(r'Очки\s+(\d+)', stats or "")
