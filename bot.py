@@ -344,8 +344,6 @@ CARDS_PER_PAGE = 50
 # --- Для обменов ---
 pending_trades = {}
 trade_confirmations = {}
-# --- Для изменения статов карточек ---
-admin_edit_state = {}
 
 
 TRADE_NHL_PHRASES = [
@@ -800,21 +798,6 @@ async def open_team(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @require_subscribe
 
-
-@admin_only
-async def resetweek(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    record_admin_usage(user_id, "/resetweek")
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT id FROM users")
-    users = c.fetchall()
-    for (uid,) in users:
-        score = await get_user_score_cached(uid)
-        c.execute("UPDATE users SET last_week_score=? WHERE id=?", (score, uid))
-    conn.commit()
-    conn.close()
-    await update.message.reply_text("✅ Еженедельные приросты обновлены для всех игроков.")
 
 # -------- start с проверкой на админа ----------
 
@@ -2419,12 +2402,8 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     record_admin_usage(user_id, "/admin_panel")
     text = (
         "⚙️ *Админ-панель*\n\n"
-        "/editcard — редактировать карточки\n"
         "/giveallcards — выдать все недостающие\n"
-        "/resetweek — обнулить недельный прирост\n"
         "/deletecard <имя> — удалить карту по имени\n"
-        "/ban <id> — заблокировать пользователя\n"
-        "/unban <id> — разблокировать пользователя\n"
         "/logadmin — последние действия админов\n"
         "/admintop — топ админов\n"
         "/stats — статистика\n"
@@ -2479,155 +2458,6 @@ async def giveallcards(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ Выдано {len(missing)} новых карточек."
     )
 
-    admin_edit_state = {}  # user_id: {step, card_id}
-EDIT_CARDS_PER_PAGE = 20
-
-@admin_only
-async def editcard(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    record_admin_usage(user_id, "/editcard")
-    admin_edit_state[user_id] = {"step": "list"}
-    await send_editcard_list(update.message.chat_id, context, 0, user_id)
-
-async def send_editcard_list(chat_id, context, page, user_id, edit_message_id=None):
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT id, name, rarity FROM cards ORDER BY rarity, name")
-    cards = c.fetchall()
-    conn.close()
-    total = len(cards)
-    total_pages = (total + EDIT_CARDS_PER_PAGE - 1) // EDIT_CARDS_PER_PAGE
-    start = page * EDIT_CARDS_PER_PAGE
-    end = start + EDIT_CARDS_PER_PAGE
-    page_cards = cards[start:end]
-    buttons = []
-    for cid, name, rarity in page_cards:
-        text = f"{name} ({RARITY_RU.get(rarity, rarity)})"
-        buttons.append([InlineKeyboardButton(text, callback_data=f"adminedit_{cid}")])
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton("⬅️", callback_data=f"admineditpage_{page-1}"))
-    if page < total_pages - 1:
-        nav.append(InlineKeyboardButton("➡️", callback_data=f"admineditpage_{page+1}"))
-    markup = InlineKeyboardMarkup(buttons + ([nav] if nav else []))
-    msg = f"Выберите карточку для редактирования (стр {page+1} из {total_pages}):"
-    if edit_message_id:
-        try:
-            await context.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=edit_message_id,
-                text=msg,
-                reply_markup=markup
-            )
-        except BadRequest as e:
-            if "Message is not modified" in str(e):
-                pass  # просто игнорируем
-            else:
-                raise
-    else:
-        await context.bot.send_message(chat_id, msg, reply_markup=markup)
-
-async def editcard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-    data = query.data
-
-    # Навигация по страницам
-    if data.startswith("admineditpage_"):
-        page = int(data.split("_")[1])
-        await send_editcard_list(query.message.chat_id, context, page, user_id, query.message.message_id)
-        await query.answer()
-        return
-
-    # Выбор карточки
-    if data.startswith("adminedit_"):
-        card_id = int(data.split("_")[1])
-        admin_edit_state[user_id] = {"step": "choose_action", "card_id": card_id}
-        markup = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✏️ Редактировать очки/статы", callback_data="admineditstat")],
-            [InlineKeyboardButton("⭐️ Редактировать редкость", callback_data="admineditrarity")],
-            [InlineKeyboardButton("✍️ Переименовать", callback_data="admineditname")],
-            [InlineKeyboardButton("Назад", callback_data="admineditpage_0")]
-        ])
-        # Получим имя карточки
-        card = get_card(card_id)
-        name = card["name"] if card else "карточка"
-        text = f"Выбрана: <b>{name}</b>\nЧто редактировать?"
-        await query.edit_message_text(text, reply_markup=markup, parse_mode='HTML')
-        await query.answer()
-        return
-
-    # Выбор действия (очки или редкость)
-    if data == "admineditstat":
-        admin_edit_state[user_id]["step"] = "edit_stats"
-        await query.edit_message_text("Введите новое значение для поля <b>stats</b> (например: Очки 88 или Поб 33 КН 2.22):", parse_mode='HTML')
-        await query.answer()
-        return
-    if data == "admineditrarity":
-        admin_edit_state[user_id]["step"] = "edit_rarity"
-        # Список доступных редкостей
-        buttons = [
-            [InlineKeyboardButton(RARITY_RU[r], callback_data=f"adminsetrarity_{r}")]
-            for r in RARITY_ORDER.keys()
-        ]
-        markup = InlineKeyboardMarkup(buttons)
-        await query.edit_message_text("Выберите новую редкость:", reply_markup=markup)
-        await query.answer()
-        return
-    if data == "admineditname":
-        admin_edit_state[user_id]["step"] = "edit_name"
-        card_id = admin_edit_state[user_id].get("card_id")
-        card = get_card(card_id)
-        name = card["name"] if card else "игрока"
-        await query.edit_message_text(f"✍️ Введи новое имя для {name}:")
-        await query.answer()
-        return
-
-    # Выбор редкости из списка
-    if data.startswith("adminsetrarity_"):
-        rarity = data.split("_")[1]
-        card_id = admin_edit_state[user_id].get("card_id")
-        if not card_id:
-            await query.answer("Ошибка! Карточка не выбрана.")
-            return
-        conn = get_db()
-        c = conn.cursor()
-        c.execute("UPDATE cards SET rarity = ? WHERE id = ?", (rarity, card_id))
-        c.execute("SELECT name FROM cards WHERE id = ?", (card_id,))
-        row = c.fetchone()
-        conn.commit()
-        name = row[0] if row else "карточка"
-        conn.close()
-        invalidate_score_cache_for_card(card_id)
-        await query.edit_message_text(f"✅ Редкость карточки <b>{name}</b> обновлена на: {RARITY_RU[rarity]}", parse_mode='HTML')
-        admin_edit_state.pop(user_id, None)
-        await query.answer()
-        return
-
-async def admin_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id not in admin_edit_state:
-        return
-    state = admin_edit_state[user_id]
-    if state.get("step") == "edit_stats":
-        card_id = state.get("card_id")
-        new_stats = update.message.text
-        conn = get_db()
-        c = conn.cursor()
-        c.execute("UPDATE cards SET stats = ? WHERE id = ?", (new_stats, card_id))
-        c.execute("SELECT name FROM cards WHERE id = ?", (card_id,))
-        row = c.fetchone()
-        conn.commit()
-        name = row[0] if row else "карточка"
-        conn.close()
-        invalidate_score_cache_for_card(card_id)
-        await update.message.reply_text(f"✅ Поле <b>stats</b> карточки <b>{name}</b> обновлено на: <code>{new_stats}</code>", parse_mode='HTML')
-    elif state.get("step") == "edit_name":
-        card_id = state.get("card_id")
-        new_name = update.message.text.strip()
-        db.update_player_name(card_id, new_name)
-        await update.message.reply_text(f"✅ Игрок теперь известен как {new_name}!")
-    admin_edit_state.pop(user_id, None)
 
 async def admin_remove_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -2647,34 +2477,6 @@ async def admin_remove_callback(update: Update, context: ContextTypes.DEFAULT_TY
             text += "\n\n✅ Удалён"
         await query.edit_message_text(text, parse_mode="Markdown")
         await query.answer("Удалён")
-    else:
-        await query.answer("🤔 Этот пользователь уже не админ.", show_alert=True)
-
-
-@admin_only
-async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    record_admin_usage(user_id, "/ban")
-    if not context.args or not context.args[0].isdigit():
-        await update.message.reply_text("Укажите ID пользователя после команды.")
-        return
-    target = int(context.args[0])
-    banned_users.add(target)
-    await update.message.reply_text(f"Пользователь {target} заблокирован.")
-
-
-@admin_only
-async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    record_admin_usage(user_id, "/unban")
-    if not context.args or not context.args[0].isdigit():
-        await update.message.reply_text("Укажите ID пользователя после команды.")
-        return
-    target = int(context.args[0])
-    banned_users.discard(target)
-    await update.message.reply_text(f"Пользователь {target} разблокирован.")
-
-
 @admin_only
 async def logadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -2759,7 +2561,6 @@ async def whoonline(update: Update, context: ContextTypes.DEFAULT_TYPE):
 TEMP_DICTS = [
     pending_trades,
     trade_confirmations,
-    admin_edit_state,
 ]
 
 async def track_user_activity(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2833,8 +2634,6 @@ def main():
     application.add_handler(CommandHandler("card", card))
     application.add_handler(CommandHandler("myid", myid))
     application.add_handler(CommandHandler("whoisadmin", whoisadmin))
-    application.add_handler(CommandHandler("ban", ban))
-    application.add_handler(CommandHandler("unban", unban))
     application.add_handler(CommandHandler("logadmin", logadmin))
     application.add_handler(CommandHandler("admintop", admintop))
     application.add_handler(CommandHandler("stats", stats))
@@ -2844,23 +2643,16 @@ def main():
     application.add_handler(CommandHandler("me", me))
     application.add_handler(CommandHandler("xp", xp))
     application.add_handler(CommandHandler("topxp", topxp))
-    application.add_handler(CommandHandler("resetweek", resetweek))
     application.add_handler(CommandHandler("trade", trade))
     application.add_handler(CallbackQueryHandler(menu_callback, pattern="^menu_"))
     application.add_handler(CallbackQueryHandler(trade_callback, pattern="^trade_"))
     application.add_handler(CommandHandler("collection", collection))
     application.add_handler(CallbackQueryHandler(collection_callback, pattern="^coll_"))
     application.add_handler(CallbackQueryHandler(trade_page_callback, pattern="^trade_page_(prev|next)$"))
-    application.add_handler(CommandHandler("editcard", editcard))
-    application.add_handler(CallbackQueryHandler(editcard_callback, pattern="^(adminedit|admineditpage|admineditstat|admineditrarity|admineditname|adminsetrarity)_?"))
     application.add_handler(CommandHandler("rename_player", handlers.rename_player))
     application.add_handler(CallbackQueryHandler(handlers.rename_select_callback, pattern="^rename_select:\d+$"))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handlers.rename_player_text), group=5)
     application.add_handler(CommandHandler("myteam", handlers.show_my_team))
-    application.add_handler(
-        MessageHandler(filters.TEXT & (~filters.COMMAND), admin_text_handler),
-        group=5,
-    )
     application.add_handler(CallbackQueryHandler(check_subscribe_callback, pattern="^check_subscribe$"))
     application.add_handler(CommandHandler("invite", invite))
     application.add_handler(CommandHandler("rank", rank))
