@@ -2467,6 +2467,7 @@ async def editcard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         markup = InlineKeyboardMarkup([
             [InlineKeyboardButton("✏️ Редактировать очки/статы", callback_data="admineditstat")],
             [InlineKeyboardButton("⭐️ Редактировать редкость", callback_data="admineditrarity")],
+            [InlineKeyboardButton("✍️ Переименовать", callback_data="admineditname")],
             [InlineKeyboardButton("Назад", callback_data="admineditpage_0")]
         ])
         # Получим имя карточки
@@ -2492,6 +2493,14 @@ async def editcard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         markup = InlineKeyboardMarkup(buttons)
         await query.edit_message_text("Выберите новую редкость:", reply_markup=markup)
+        await query.answer()
+        return
+    if data == "admineditname":
+        admin_edit_state[user_id]["step"] = "edit_name"
+        card_id = admin_edit_state[user_id].get("card_id")
+        card = get_card_from_cache(card_id)
+        name = card["name"] if card else "игрока"
+        await query.edit_message_text(f"✍️ Введи новое имя для {name}:")
         await query.answer()
         return
 
@@ -2534,6 +2543,12 @@ async def admin_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         conn.close()
         refresh_card_cache(card_id)
         await update.message.reply_text(f"✅ Поле <b>stats</b> карточки <b>{name}</b> обновлено на: <code>{new_stats}</code>", parse_mode='HTML')
+    elif state.get("step") == "edit_name":
+        card_id = state.get("card_id")
+        new_name = update.message.text.strip()
+        db.update_player_name(card_id, new_name)
+        refresh_card_cache(card_id)
+        await update.message.reply_text(f"✅ Игрок теперь известен как {new_name}!")
     admin_edit_state.pop(user_id, None)
 
 async def admin_remove_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2784,7 +2799,7 @@ def main():
     application.add_handler(CallbackQueryHandler(collection_callback, pattern="^coll_"))
     application.add_handler(CallbackQueryHandler(trade_page_callback, pattern="^trade_page_(prev|next)$"))
     application.add_handler(CommandHandler("editcard", editcard))
-    application.add_handler(CallbackQueryHandler(editcard_callback, pattern="^(adminedit|admineditpage|admineditstat|admineditrarity|adminsetrarity)_?"))
+    application.add_handler(CallbackQueryHandler(editcard_callback, pattern="^(adminedit|admineditpage|admineditstat|admineditrarity|admineditname|adminsetrarity)_?"))
     application.add_handler(CommandHandler("rename_player", handlers.rename_player))
     application.add_handler(CallbackQueryHandler(handlers.rename_select_callback, pattern="^rename_select:\d+$"))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handlers.rename_player_text), group=5)
