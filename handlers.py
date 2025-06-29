@@ -3,12 +3,24 @@ import random
 import asyncio
 import re
 import time
+import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
+from telegram.error import Forbidden
 from battle import BattleSession, BattleController, POSITION_EMOJI
 import db_pg as db
 from helpers.leveling import level_from_xp, xp_to_next, calc_battle_xp
 from helpers.commentary import format_period_summary, format_final_summary
+
+
+async def _safe_send_message(bot, chat_id: int, text: str, **kwargs) -> None:
+    """Send a Telegram message and ignore forbidden errors."""
+    try:
+        await bot.send_message(chat_id, text, **kwargs)
+    except Forbidden:
+        logging.warning("Cannot send message to %s: forbidden", chat_id)
+    except Exception as e:  # pragma: no cover - log unexpected send errors
+        logging.exception("Error sending message to %s: %s", chat_id, e)
 
 level_up_msg = "🆙 *Новый уровень!*  Ты достиг Lv {lvl}.\n🎁 Твой приз: {reward}"
 
@@ -680,8 +692,8 @@ async def _start_pvp_duel(uid1: int, uid2: int, team1, team2, name1: str, name2:
         [InlineKeyboardButton("🎯 Держать темп", callback_data="battle_balanced")],
     ]
     markup = InlineKeyboardMarkup(keyboard)
-    await context.bot.send_message(uid1, "⏱ Первый период. Выбери установку:", reply_markup=markup)
-    await context.bot.send_message(uid2, "⏱ Первый период. Выбери установку:", reply_markup=markup)
+    await _safe_send_message(context.bot, uid1, "⏱ Первый период. Выбери установку:", reply_markup=markup)
+    await _safe_send_message(context.bot, uid2, "⏱ Первый период. Выбери установку:", reply_markup=markup)
 
 
 async def _prompt_pvp_phase(state: dict, context: ContextTypes.DEFAULT_TYPE):
@@ -723,7 +735,7 @@ async def _prompt_pvp_phase(state: dict, context: ContextTypes.DEFAULT_TYPE):
 
     markup = InlineKeyboardMarkup(keyboard)
     for uid in state["users"]:
-        await context.bot.send_message(uid, text, reply_markup=markup, parse_mode="HTML")
+        await _safe_send_message(context.bot, uid, text, reply_markup=markup, parse_mode="HTML")
 
 
 
@@ -940,7 +952,8 @@ async def _handle_pvp_battle(update: Update, context: ContextTypes.DEFAULT_TYPE)
         xp2, lvl2, up2 = await apply_xp(uid2, opp_result, False, context)
         summary1 = format_final_summary(controller.session, result, xp1, lvl1, up1)
         summary2 = format_final_summary(controller.session, opp_result, xp2, lvl2, up2)
-        await context.bot.send_message(
+        await _safe_send_message(
+            context.bot,
             uid1,
             summary1,
             reply_markup=InlineKeyboardMarkup(
@@ -951,7 +964,8 @@ async def _handle_pvp_battle(update: Update, context: ContextTypes.DEFAULT_TYPE)
             ),
             parse_mode="HTML",
         )
-        await context.bot.send_message(
+        await _safe_send_message(
+            context.bot,
             uid2,
             summary2,
             reply_markup=InlineKeyboardMarkup(
