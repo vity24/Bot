@@ -53,6 +53,7 @@ import handlers
 import db_pg as db
 from helpers.leveling import xp_to_next
 from helpers import shorten_number, format_ranking_row, format_my_rank
+from helpers.normalize_stats import normalize_stats_input
 from helpers.styles import get_player_style
 from helpers.permissions import ADMINS, is_admin, admin_only
 from helpers.admin_utils import (
@@ -2565,7 +2566,10 @@ async def admin_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     state = admin_edit_state[user_id]
     if state.get("step") == "edit_stats":
         card_id = state.get("card_id")
-        new_stats = update.message.text
+        card = get_card_from_cache(card_id)
+        raw_input = update.message.text
+        pos = card["pos"] if card else ""
+        new_stats = normalize_stats_input(raw_input, pos)
         conn = get_db()
         c = conn.cursor()
         c.execute("UPDATE cards SET stats = ? WHERE id = ?", (new_stats, card_id))
@@ -2577,7 +2581,8 @@ async def admin_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         update_card_points(card_id)
         refresh_card_cache(card_id)
         invalidate_score_cache_for_card(card_id)
-        await update.message.reply_text(f"✅ Поле <b>stats</b> карточки <b>{name}</b> обновлено на: <code>{new_stats}</code>", parse_mode='HTML')
+        SCORE_CACHE.clear()
+        await update.message.reply_text("✅ Очки обновлены!")
     elif state.get("step") == "edit_name":
         card_id = state.get("card_id")
         new_name = update.message.text.strip()
