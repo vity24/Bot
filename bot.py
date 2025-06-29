@@ -350,6 +350,18 @@ def refresh_card_cache(card_id):
     else:
         CARD_CACHE.pop(card_id, None)
 
+def invalidate_score_cache_for_card(card_id: int) -> None:
+    """Reset cached scores and ranks for users owning the given card."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT DISTINCT user_id FROM inventory WHERE card_id=?", (card_id,))
+    user_ids = [row[0] for row in cur.fetchall()]
+    conn.close()
+    for uid in user_ids:
+        SCORE_CACHE.pop(uid, None)
+        RANK_CACHE.pop(uid, None)
+    globals()['TOP_CACHE'] = ([], 0)
+
 POS_RU = {
     "C": "Центр",
     "LW": "Левый нап.",
@@ -2521,6 +2533,7 @@ async def editcard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         name = row[0] if row else "карточка"
         conn.close()
         refresh_card_cache(card_id)
+        invalidate_score_cache_for_card(card_id)
         await query.edit_message_text(f"✅ Редкость карточки <b>{name}</b> обновлена на: {RARITY_RU[rarity]}", parse_mode='HTML')
         admin_edit_state.pop(user_id, None)
         await query.answer()
@@ -2543,6 +2556,7 @@ async def admin_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         name = row[0] if row else "карточка"
         conn.close()
         refresh_card_cache(card_id)
+        invalidate_score_cache_for_card(card_id)
         await update.message.reply_text(f"✅ Поле <b>stats</b> карточки <b>{name}</b> обновлено на: <code>{new_stats}</code>", parse_mode='HTML')
     elif state.get("step") == "edit_name":
         card_id = state.get("card_id")
