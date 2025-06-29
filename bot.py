@@ -2287,7 +2287,6 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     record_admin_usage(user_id, "/admin_panel")
     text = (
         "⚙️ *Админ-панель*\n\n"
-        "/nocooldown — снять кулдаун\n"
         "/editcard — редактировать карточки\n"
         "/giveallcards — выдать все недостающие\n"
         "/resetweek — обнулить недельный прирост\n"
@@ -2297,22 +2296,10 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/logadmin — последние действия админов\n"
         "/admintop — топ админов\n"
         "/stats — статистика\n"
-        "/broadcast <текст> — рассылка\n"
         "/whoonline — кто онлайн\n"
         "/whoisadmin <ID|@user> — информация об админах"
     )
     await update.message.reply_text(text, parse_mode="Markdown")
-
-@admin_only
-async def nocooldown(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    record_admin_usage(user_id, "/nocooldown")
-    if user_id in admin_no_cooldown:
-        admin_no_cooldown.remove(user_id)
-        await update.message.reply_text("❄️ Ограничение по времени снова включено для вас.")
-    else:
-        admin_no_cooldown.add(user_id)
-        await update.message.reply_text("🔥 Ограничение по времени для вас отключено!")
 
 @admin_only
 async def deletecard(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2618,30 +2605,6 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(text)
 
-
-@admin_only
-async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    record_admin_usage(user_id, "/broadcast")
-    if not context.args:
-        await update.message.reply_text("Укажите текст рассылки после команды.")
-        return
-    text = " ".join(context.args)
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT id FROM users")
-    ids = [row[0] for row in c.fetchall()]
-    conn.close()
-    sent = 0
-    for uid in ids:
-        try:
-            await context.bot.send_message(uid, text)
-            sent += 1
-        except Exception:
-            pass
-    await update.message.reply_text(f"Отправлено {sent} пользователям.")
-
-
 @admin_only
 async def whoonline(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -2743,9 +2706,7 @@ def main():
     application.add_handler(CommandHandler("logadmin", logadmin))
     application.add_handler(CommandHandler("admintop", admintop))
     application.add_handler(CommandHandler("stats", stats))
-    application.add_handler(CommandHandler("broadcast", broadcast))
     application.add_handler(CommandHandler("whoonline", whoonline))
-    application.add_handler(CommandHandler("nocooldown", nocooldown))
     application.add_handler(CommandHandler("deletecard", deletecard))
     application.add_handler(CommandHandler("giveallcards", giveallcards))
     application.add_handler(CommandHandler("me", me))
